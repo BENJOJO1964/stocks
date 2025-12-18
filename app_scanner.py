@@ -768,7 +768,14 @@ elif st.session_state.scan_results is not None and not st.session_state.is_scann
     st.info(f"找到 {len(results)} 支符合條件的股票")
     
     # 確保結果已按總分排序
-    results = results.sort_values('Total_Score', ascending=False).reset_index(drop=True)
+    # 防守判斷：檢查 results 是否為空或是否存在 'Total_Score' 欄位
+    if len(results) > 0 and 'Total_Score' in results.columns:
+        results = results.sort_values('Total_Score', ascending=False).reset_index(drop=True)
+    else:
+        if len(results) == 0:
+            st.warning("⚠️ 今日無符合條件股票")
+        elif 'Total_Score' not in results.columns:
+            st.warning("⚠️ 掃描結果缺少必要欄位，無法進行排序")
     
     # 確保族群欄位存在
     if '族群' not in results.columns:
