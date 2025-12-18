@@ -1139,7 +1139,13 @@ class TaiwanStockScanner:
                 
                 # 波段狀態和建議持有天數
                 swing_status = latest.get('波段狀態', '不符合')
-                holding_days = int(latest.get('建議持有天數', 14))
+                # 只有當買入訊號為「買入」或「強買入」時，才顯示建議持有天數
+                # 如果是「觀察」或「無信號」，則設為0（表示不需要持有）
+                raw_holding_days = int(latest.get('建議持有天數', 14))
+                if signal in ['買入', '強買入']:
+                    holding_days = raw_holding_days
+                else:
+                    holding_days = 0  # 沒有買入訊號，不建議持有
                 
                 # 移動停損價
                 trailing_stop = latest.get('Trailing_Stop_Price', latest['Stop_Loss_Price'])

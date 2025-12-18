@@ -600,9 +600,23 @@ if scan_button and not st.session_state.is_scanning:
                         )
                 
                 # 格式化建議持有天數
-                if '建議持有天數' in display_df.columns:
+                # 只有當買入訊號為「買入」或「強買入」時才顯示持有天數
+                # 如果是「觀察」或「無信號」，顯示為"-"（表示不需要持有）
+                if '建議持有天數' in display_df.columns and '買入訊號' in display_df.columns:
+                    def format_holding_days(row):
+                        signal = row.get('買入訊號', '')
+                        days = row.get('建議持有天數', 0)
+                        # 只有買入或強買入才顯示持有天數
+                        if signal in ['買入', '強買入']:
+                            if pd.notna(days) and days > 0:
+                                return f"{int(days)}天"
+                        # 其他情況（觀察、無信號、Data Error等）顯示"-"
+                        return "-"
+                    display_df['建議持有天數'] = display_df.apply(format_holding_days, axis=1)
+                elif '建議持有天數' in display_df.columns:
+                    # 如果沒有買入訊號列，使用原有邏輯
                     display_df['建議持有天數'] = display_df['建議持有天數'].apply(
-                        lambda x: f"{int(x)}天" if pd.notna(x) and x > 0 else "N/A"
+                        lambda x: f"{int(x)}天" if pd.notna(x) and x > 0 else "-"
                     )
                 
                 # 應用樣式（突出顯示）
