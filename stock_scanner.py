@@ -102,6 +102,7 @@ class TaiwanStockScanner:
     def fetch_stock_data(self, stock_id: str, years: int = 1) -> pd.DataFrame:
         """
         獲取股票數據（使用2年數據以準確計算MA60和RS）
+        智能處理上櫃股票：如果.TW找不到，自動嘗試.TWO
         
         Parameters:
         -----------
@@ -134,14 +135,53 @@ class TaiwanStockScanner:
                     hist_data = ticker.history(start=start_date.strftime('%Y-%m-%d'), 
                                               end=end_date.strftime('%Y-%m-%d'))
                 except Exception as e2:
-                    # 兩種方式都失敗，顯示清晰錯誤訊息
-                    print(f"⚠️ Ticker {stock_id} not found on Yahoo Finance.")
-                    print(f"   請確認：上市股票使用.TW，上櫃股票使用.TWO")
-                    return None
+                    # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
+                    if stock_id.endswith('.TW') and len(stock_id) == 8:  # 例如：4979.TW
+                        alt_ticker_id = stock_id.replace('.TW', '.TWO')
+                        try:
+                            alt_ticker = yf.Ticker(alt_ticker_id)
+                            try:
+                                hist_data = alt_ticker.history(period='1y')
+                                if hist_data.empty:
+                                    hist_data = alt_ticker.history(start=start_date.strftime('%Y-%m-%d'), 
+                                                                  end=end_date.strftime('%Y-%m-%d'))
+                                # 如果.TWO找到數據，更新stock_id以便後續處理
+                                if hist_data is not None and not hist_data.empty:
+                                    print(f"ℹ️ {stock_id} 在.TW找不到，自動切換到.TWO並成功獲取數據")
+                                    stock_id = alt_ticker_id
+                            except:
+                                pass
+                        except:
+                            pass
+                    
+                    # 如果還是失敗，返回None
+                    if hist_data is None or (hasattr(hist_data, 'empty') and hist_data.empty):
+                        print(f"⚠️ Ticker {stock_id} not found on Yahoo Finance.")
+                        print(f"   請確認：上市股票使用.TW，上櫃股票使用.TWO")
+                        return None
             
             if hist_data is None or hist_data.empty:
-                print(f"⚠️ Ticker {stock_id} not found on Yahoo Finance (no data returned)")
-                return None
+                # 最後一次嘗試：如果是.TW，試試.TWO
+                if stock_id.endswith('.TW') and len(stock_id) == 8:
+                    alt_ticker_id = stock_id.replace('.TW', '.TWO')
+                    try:
+                        alt_ticker = yf.Ticker(alt_ticker_id)
+                        try:
+                            hist_data = alt_ticker.history(period='1y')
+                            if hist_data.empty:
+                                hist_data = alt_ticker.history(start=start_date.strftime('%Y-%m-%d'), 
+                                                              end=end_date.strftime('%Y-%m-%d'))
+                            if hist_data is not None and not hist_data.empty:
+                                print(f"ℹ️ {stock_id} 在.TW找不到，自動切換到.TWO並成功獲取數據")
+                                stock_id = alt_ticker_id
+                        except:
+                            pass
+                    except:
+                        pass
+                
+                if hist_data is None or hist_data.empty:
+                    print(f"⚠️ Ticker {stock_id} not found on Yahoo Finance (no data returned)")
+                    return None
             
             df = hist_data.reset_index()
             if 'Date' not in df.columns:
@@ -634,12 +674,31 @@ class TaiwanStockScanner:
                 sector = self.DEFAULT_TICKERS.get(stock_id, '其他')
                 
                 # 獲取數據（使用1年數據，100%真實數據）
-                # 注意：上市股票使用.TW，上櫃股票使用.TWO
+                # 注意：系統會自動處理上櫃股票（如果.TW找不到，會自動嘗試.TWO）
                 # 波段交易需要至少60個交易日（用於計算MA60和基本指標）
                 df = self.fetch_stock_data(stock_id, years=1)
+                
                 if df is None or len(df) < 60:  # 至少需要60個交易日才能計算MA60和基本指標
-                    # 即使無法獲取數據，也顯示在結果中（標記為無數據）
-                    stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                    # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
+                    if stock_id.endswith('.TW') and len(stock_id) == 8:
+                        alt_stock_id = stock_id.replace('.TW', '.TWO')
+                        df_alt = self.fetch_stock_data(alt_stock_id, years=1)
+                        if df_alt is not None and len(df_alt) >= 60:
+                            # .TWO成功獲取數據，使用.TWO的ticker
+                            df = df_alt
+                            stock_id = alt_stock_id
+                    
+                    if df is None or len(df) < 60:
+                        # 即使無法獲取數據，也顯示在結果中（標記為無數據）
+                        stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                    # 如果.TWO沒有在STOCK_NAMES中，嘗試.TW的映射
+                    if stock_id.endswith('.TWO') and stock_name == stock_id:
+                        tw_version = stock_id.replace('.TWO', '.TW')
+                        stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
+                        # 如果.TWO有數據但STOCK_NAMES沒有，嘗試.TW的映射
+                        if stock_id.endswith('.TWO') and stock_name == stock_id:
+                            tw_version = stock_id.replace('.TWO', '.TW')
+                            stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
                     
                     # 檢查是否是後綴問題
                     error_msg = '無法獲取'
@@ -684,6 +743,10 @@ class TaiwanStockScanner:
                 # 數據驗證：檢查是否有數據錯誤
                 if latest.get('Data_Error', False) or pd.isna(latest['Close']):
                     stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                    # 如果.TWO沒有在STOCK_NAMES中，嘗試.TW的映射
+                    if stock_id.endswith('.TWO') and stock_name == stock_id:
+                        tw_version = stock_id.replace('.TWO', '.TW')
+                        stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
                     results.append({
                         '族群': sector,
                         '股票代碼': stock_id,
@@ -769,8 +832,12 @@ class TaiwanStockScanner:
                 else:
                     data_date_str = str(data_date)[:10]
                 
-                # 獲取股票名稱
+                # 獲取股票名稱（處理.TWO的情況）
                 stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                # 如果.TWO沒有在STOCK_NAMES中，嘗試.TW的映射
+                if stock_id.endswith('.TWO') and stock_name == stock_id:
+                    tw_version = stock_id.replace('.TWO', '.TW')
+                    stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
                 
                 # 波段狀態和建議持有天數
                 swing_status = latest.get('波段狀態', '不符合')

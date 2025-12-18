@@ -71,7 +71,8 @@ with st.sidebar:
                     if '.TW' in ticker or '.TWO' in ticker:
                         custom_stock_list.append(ticker)
                     elif ticker.isdigit() and len(ticker) == 4:
-                        # 如果只輸入4位數字，自動添加.TW
+                        # 如果只輸入4位數字，先嘗試.TW（系統會自動處理上櫃股票）
+                        # 如果.TW找不到，fetch_stock_data會自動嘗試.TWO
                         custom_stock_list.append(f"{ticker}.TW")
             
             stock_list = custom_stock_list
