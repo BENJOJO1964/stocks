@@ -833,11 +833,27 @@ class TaiwanStockScanner:
                     data_date_str = str(data_date)[:10]
                 
                 # 獲取股票名稱（處理.TWO的情況）
-                stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                stock_name = self.STOCK_NAMES.get(stock_id, None)
                 # 如果.TWO沒有在STOCK_NAMES中，嘗試.TW的映射
-                if stock_id.endswith('.TWO') and stock_name == stock_id:
-                    tw_version = stock_id.replace('.TWO', '.TW')
-                    stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
+                if stock_name is None or stock_name == stock_id:
+                    if stock_id.endswith('.TWO'):
+                        tw_version = stock_id.replace('.TWO', '.TW')
+                        stock_name = self.STOCK_NAMES.get(tw_version, None)
+                
+                # 如果還是沒有，嘗試從yfinance自動獲取股票名稱
+                if stock_name is None or stock_name == stock_id:
+                    try:
+                        ticker = yf.Ticker(stock_id)
+                        info = ticker.info
+                        # 嘗試獲取中文名稱或英文名稱
+                        if 'longName' in info and info['longName']:
+                            stock_name = info['longName']
+                        elif 'shortName' in info and info['shortName']:
+                            stock_name = info['shortName']
+                        else:
+                            stock_name = stock_id  # 如果都獲取不到，使用股票代碼
+                    except:
+                        stock_name = stock_id  # 如果獲取失敗，使用股票代碼
                 
                 # 波段狀態和建議持有天數
                 swing_status = latest.get('波段狀態', '不符合')
