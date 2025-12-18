@@ -68,7 +68,10 @@ class TaiwanStockScanner:
                  ma_long: int = 60,
                  vol_multiplier: float = 1.2,
                  atr_period: int = 14,
-                 stop_loss_atr_mult: float = 2.0):
+                 stop_loss_atr_mult: float = 2.0,
+                 min_avg_volume: float = 1000000.0,  # 最小日均成交量（排除流動性差的股票）
+                 enable_fundamental_filter: bool = True,  # 啟用基本面篩選
+                 enable_liquidity_check: bool = True):  # 啟用流動性檢查
         """
         初始化掃描器
         
@@ -95,6 +98,9 @@ class TaiwanStockScanner:
         self.vol_multiplier = vol_multiplier
         self.atr_period = atr_period
         self.stop_loss_atr_mult = stop_loss_atr_mult
+        self.min_avg_volume = min_avg_volume  # 最小日均成交量
+        self.enable_fundamental_filter = enable_fundamental_filter
+        self.enable_liquidity_check = enable_liquidity_check
         
         # 獲取TAIEX作為基準（用於相對強度計算）
         self.benchmark_ticker = '^TWII'  # 台灣加權指數
@@ -243,16 +249,52 @@ class TaiwanStockScanner:
         df['MA5_Vol'] = df['Volume'].rolling(window=5).mean()
         df['MA20_Vol'] = df['Volume'].rolling(window=20).mean()  # 20日均量（新增）
         
-        # 計算RSI14（新增）
-        def calculate_rsi(series, period=14):
-            """計算RSI指標"""
+        # 計算RSI14（使用Wilder平滑方法 - 標準公式）
+        def calculate_rsi_wilder(series, period=14):
+            """
+            計算RSI指標 - 使用Wilder的平滑方法（標準公式）
+            Wilder使用指數移動平均（EMA）而非簡單移動平均
+            """
             delta = series.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-            rs = gain / loss
+            
+            # 分離上漲和下跌
+            gain = delta.where(delta > 0, 0.0)
+            loss = -delta.where(delta < 0, 0.0)
+            
+            # 計算初始平均（前period天的簡單平均）
+            avg_gain = gain.rolling(window=period, min_periods=period).mean()
+            avg_loss = loss.rolling(window=period, min_periods=period).mean()
+            
+            # Wilder平滑方法：使用EMA（指數移動平均）
+            # EMA公式：EMA_today = (Value_today × α) + (EMA_yesterday × (1-α))
+            # 對於Wilder RSI，α = 1/period
+            alpha = 1.0 / period
+            
+            # 計算平滑的平均收益和平均損失
+            smoothed_gain = pd.Series(index=series.index, dtype=float)
+            smoothed_loss = pd.Series(index=series.index, dtype=float)
+            
+            for i in range(len(series)):
+                if i < period - 1:
+                    smoothed_gain.iloc[i] = np.nan
+                    smoothed_loss.iloc[i] = np.nan
+                elif i == period - 1:
+                    # 第一個值使用簡單平均
+                    smoothed_gain.iloc[i] = avg_gain.iloc[i]
+                    smoothed_loss.iloc[i] = avg_loss.iloc[i]
+                else:
+                    # 後續值使用Wilder平滑（EMA）
+                    smoothed_gain.iloc[i] = (gain.iloc[i] * alpha) + (smoothed_gain.iloc[i-1] * (1 - alpha))
+                    smoothed_loss.iloc[i] = (loss.iloc[i] * alpha) + (smoothed_loss.iloc[i-1] * (1 - alpha))
+            
+            # 計算RS（相對強度）
+            rs = smoothed_gain / smoothed_loss.replace(0, np.nan)
+            
+            # 計算RSI
             rsi = 100 - (100 / (1 + rs))
+            
             return rsi
-        df['RSI14'] = calculate_rsi(df['Close'], period=14)
+        df['RSI14'] = calculate_rsi_wilder(df['Close'], period=14)
         
         # 計算60日高點（新增）
         df['High_60d'] = df['High'].rolling(window=60).max()
@@ -273,6 +315,182 @@ class TaiwanStockScanner:
         df.drop(['High_Low', 'High_Close', 'Low_Close', 'True_Range'], axis=1, inplace=True)
         
         return df
+    
+    def check_market_environment(self) -> str:
+        """
+        判斷市場環境：多頭/空頭/盤整
+        
+        Returns:
+        --------
+        str: '多頭', '空頭', '盤整', '未知'
+        """
+        try:
+            benchmark_df = self.fetch_benchmark_data(years=1)
+            if benchmark_df is None or len(benchmark_df) < 60:
+                return '未知'
+            
+            # 計算加權指數的趨勢
+            benchmark_df['MA20'] = benchmark_df['Benchmark_Close'].rolling(window=20).mean()
+            benchmark_df['MA60'] = benchmark_df['Benchmark_Close'].rolling(window=60).mean()
+            
+            if len(benchmark_df) < 60:
+                return '未知'
+            
+            latest = benchmark_df.iloc[-1]
+            recent_20d = benchmark_df.iloc[-20:]
+            
+            current_price = latest['Benchmark_Close']
+            ma20 = latest['MA20']
+            ma60 = latest['MA60']
+            
+            # 判斷條件
+            price_above_ma20 = current_price > ma20 if pd.notna(ma20) else False
+            price_above_ma60 = current_price > ma60 if pd.notna(ma60) else False
+            ma20_above_ma60 = ma20 > ma60 if (pd.notna(ma20) and pd.notna(ma60)) else False
+            
+            # 計算最近20天的波動性（用於判斷盤整）
+            volatility = recent_20d['Benchmark_Close'].std() / recent_20d['Benchmark_Close'].mean()
+            price_change_20d = (current_price - recent_20d['Benchmark_Close'].iloc[0]) / recent_20d['Benchmark_Close'].iloc[0]
+            
+            # 判斷邏輯
+            if price_above_ma20 and price_above_ma60 and ma20_above_ma60:
+                # 如果波動性小且漲幅小，可能是盤整
+                if abs(price_change_20d) < 0.03 and volatility < 0.02:
+                    return '盤整'
+                return '多頭'
+            elif not price_above_ma20 and not price_above_ma60 and not ma20_above_ma60:
+                return '空頭'
+            elif abs(price_change_20d) < 0.02 and volatility < 0.015:
+                return '盤整'
+            else:
+                return '未知'
+                
+        except Exception as e:
+            print(f"判斷市場環境失敗: {str(e)}")
+            return '未知'
+    
+    def check_liquidity(self, df: pd.DataFrame) -> bool:
+        """
+        檢查流動性：日均成交量是否足夠
+        
+        Parameters:
+        -----------
+        df : pd.DataFrame
+            股票數據
+        
+        Returns:
+        --------
+        bool: True表示流動性充足，False表示流動性不足
+        """
+        if not self.enable_liquidity_check:
+            return True
+        
+        if df is None or len(df) < 20:
+            return False
+        
+        # 計算最近20天的平均成交量
+        avg_volume = df['Volume'].tail(20).mean()
+        
+        # 檢查是否達到最低標準
+        return avg_volume >= self.min_avg_volume
+    
+    def check_fundamental(self, stock_id: str) -> tuple:
+        """
+        檢查基本面：獲取財務數據並判斷是否健康
+        
+        Parameters:
+        -----------
+        stock_id : str
+            股票代號
+        
+        Returns:
+        --------
+        tuple: (is_healthy: bool, reason: str, financial_data: dict)
+        """
+        if not self.enable_fundamental_filter:
+            return (True, '基本面篩選已停用', {})
+        
+        try:
+            ticker = yf.Ticker(stock_id)
+            info = ticker.info
+            
+            # 嘗試獲取關鍵財務指標
+            financial_data = {}
+            issues = []
+            
+            # 檢查營收成長（如果可用）
+            if 'revenueGrowth' in info and pd.notna(info['revenueGrowth']):
+                revenue_growth = info['revenueGrowth'] * 100  # 轉換為百分比
+                financial_data['營收成長率'] = f"{revenue_growth:.2f}%"
+                if revenue_growth < -20:  # 營收大幅下降
+                    issues.append(f"營收大幅下降({revenue_growth:.1f}%)")
+            
+            # 檢查EPS（如果可用）
+            if 'trailingEps' in info and pd.notna(info['trailingEps']):
+                eps = info['trailingEps']
+                financial_data['EPS'] = f"{eps:.2f}"
+                if eps < 0:  # 虧損
+                    issues.append(f"EPS為負({eps:.2f})")
+            
+            # 檢查負債比率（如果可用）
+            if 'debtToEquity' in info and pd.notna(info['debtToEquity']):
+                debt_ratio = info['debtToEquity']
+                financial_data['負債比率'] = f"{debt_ratio:.2f}"
+                if debt_ratio > 100:  # 負債比率過高
+                    issues.append(f"負債比率過高({debt_ratio:.1f})")
+            
+            # 檢查流動比率（如果可用）
+            if 'currentRatio' in info and pd.notna(info['currentRatio']):
+                current_ratio = info['currentRatio']
+                financial_data['流動比率'] = f"{current_ratio:.2f}"
+                if current_ratio < 1.0:  # 流動性不足
+                    issues.append(f"流動比率不足({current_ratio:.2f})")
+            
+            # 判斷是否健康
+            if issues:
+                return (False, '; '.join(issues), financial_data)
+            else:
+                return (True, '財務狀況正常', financial_data)
+                
+        except Exception as e:
+            # 如果無法獲取財務數據，不阻止（因為yfinance對台灣股票支持有限）
+            return (True, f'無法獲取財務數據', {})
+    
+    def get_institutional_data(self, stock_id: str) -> dict:
+        """
+        獲取籌碼面數據（外資、投信、自營商買賣超）
+        
+        注意：yfinance對台灣股票的籌碼面數據支持有限
+        這個功能主要作為佔位符，未來可以接入其他數據源
+        
+        Parameters:
+        -----------
+        stock_id : str
+            股票代號
+        
+        Returns:
+        --------
+        dict: 包含籌碼面數據的字典
+        """
+        try:
+            ticker = yf.Ticker(stock_id)
+            info = ticker.info
+            
+            # yfinance對台灣股票的籌碼面數據支持有限
+            # 這裡嘗試獲取可能存在的相關字段
+            institutional_data = {}
+            
+            # 嘗試獲取機構持股比例（如果可用）
+            if 'heldPercentInstitutions' in info and pd.notna(info['heldPercentInstitutions']):
+                institutional_data['機構持股比例'] = f"{info['heldPercentInstitutions'] * 100:.2f}%"
+            
+            # 注意：yfinance通常不提供外資/投信/自營商買賣超數據
+            # 這些數據需要從台灣證券交易所或專門的數據源獲取
+            
+            return institutional_data
+            
+        except Exception as e:
+            return {}
     
     def calculate_relative_strength(self, stock_df: pd.DataFrame, 
                                    benchmark_df: Optional[pd.DataFrame]) -> pd.Series:
@@ -454,6 +672,8 @@ class TaiwanStockScanner:
         df['RS_Score'] = rs_scores * self.relative_strength_weight
         
         # 5. 機構資金評分（10%）
+        # 注意：由於yfinance對台灣股票的籌碼面數據支持有限
+        # 這裡暫時使用中性分數，未來可以接入其他數據源獲取真實的外資/投信買賣超數據
         df['Institutional_Score'] = 50.0 * self.institutional_weight
         
         # 計算總分（只有通過趨勢基礎檢查的才能得分）
@@ -673,10 +893,68 @@ class TaiwanStockScanner:
                 # 獲取族群分類（如果在預設列表中，使用預設分類；否則使用"其他"）
                 sector = self.DEFAULT_TICKERS.get(stock_id, '其他')
                 
+                # 檢查市場環境（只掃描多頭市場）
+                if i == 0:  # 只在第一次掃描時檢查市場環境
+                    market_env = self.check_market_environment()
+                    if market_env == '空頭':
+                        # 在空頭市場跳過掃描
+                        continue
+                    elif market_env == '盤整':
+                        # 在盤整市場也可以掃描，但可能需要更嚴格條件
+                        pass
+                
                 # 獲取數據（使用1年數據，100%真實數據）
                 # 注意：系統會自動處理上櫃股票（如果.TW找不到，會自動嘗試.TWO）
                 # 波段交易需要至少60個交易日（用於計算MA60和基本指標）
                 df = self.fetch_stock_data(stock_id, years=1)
+                
+                # 檢查流動性
+                if df is not None and len(df) >= 20:
+                    if not self.check_liquidity(df):
+                        # 流動性不足，跳過
+                        stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                        results.append({
+                            '族群': sector,
+                            '股票代碼': stock_id,
+                            '股票名稱': stock_name,
+                            '當前股價': np.nan,
+                            '策略評分': 0.0,
+                            '買入訊號': '流動性不足',
+                            '建議停損價(ATR)': np.nan,
+                            '移動停損價': np.nan,
+                            '建議停利價': np.nan,
+                            '數據日期': '流動性不足',
+                            '波段狀態': '流動性不足',
+                            '建議持有天數': 0,
+                            'MA5': np.nan,
+                            'MA20': np.nan,
+                            'MA60': np.nan,
+                        })
+                        continue
+                
+                # 檢查基本面（如果啟用）
+                is_fundamental_healthy, fundamental_reason, financial_data = self.check_fundamental(stock_id)
+                if not is_fundamental_healthy and self.enable_fundamental_filter:
+                    # 基本面不佳，跳過或標記
+                    stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
+                    results.append({
+                        '族群': sector,
+                        '股票代碼': stock_id,
+                        '股票名稱': stock_name,
+                        '當前股價': np.nan,
+                        '策略評分': 0.0,
+                        '買入訊號': '基本面不佳',
+                        '建議停損價(ATR)': np.nan,
+                        '移動停損價': np.nan,
+                        '建議停利價': np.nan,
+                        '數據日期': fundamental_reason,
+                        '波段狀態': '基本面不佳',
+                        '建議持有天數': 0,
+                        'MA5': np.nan,
+                        'MA20': np.nan,
+                        'MA60': np.nan,
+                    })
+                    continue
                 
                 if df is None or len(df) < 60:  # 至少需要60個交易日才能計算MA60和基本指標
                     # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
@@ -700,7 +978,7 @@ class TaiwanStockScanner:
                             tw_version = stock_id.replace('.TWO', '.TW')
                             stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
                     
-                    # 檢查是否是後綴問題
+                    # 檢查錯誤原因
                     error_msg = '無法獲取'
                     if df is None:
                         # 嘗試判斷是否需要切換後綴
@@ -708,6 +986,8 @@ class TaiwanStockScanner:
                             # 如果是.TW但找不到，可能是上櫃股票
                             pass
                         error_msg = 'Yahoo Finance未找到'
+                    elif len(df) < 60:
+                        error_msg = '數據不足'
                     
                     results.append({
                         '族群': sector,

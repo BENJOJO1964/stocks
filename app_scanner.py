@@ -150,6 +150,68 @@ with st.sidebar:
         rs_weight = rs_weight / total_weight
         inst_weight = inst_weight / total_weight
     
+    # 權重優化建議（基於統計分析）
+    with st.expander("💡 權重優化建議（點擊查看）", expanded=False):
+        st.markdown("""
+        ### 當前權重設定
+        - 趨勢權重：{:.0%}
+        - 動量權重：{:.0%}
+        - 相對強度權重：{:.0%}
+        - 機構資金權重：{:.0%}
+        
+        ### 專業建議
+        **波段交易（2-4周持有）的推薦權重：**
+        - ✅ 趨勢權重：40-50%（最重要，因為波段交易依賴趨勢）
+        - ✅ 動量權重：25-35%（成交量確認趨勢）
+        - ✅ 相對強度權重：20-25%（相對大盤表現）
+        - ⚠️ 機構資金權重：5-10%（yfinance支持有限，建議降低）
+        
+        **當前設定評估：**
+        """.format(trend_weight, momentum_weight, rs_weight, inst_weight))
+        
+        # 給出評估
+        suggestions = []
+        if trend_weight < 0.35:
+            suggestions.append("⚠️ 趨勢權重偏低，建議提高到40%以上")
+        if momentum_weight > 0.35:
+            suggestions.append("⚠️ 動量權重偏高，建議降低到30%以下")
+        if inst_weight > 0.15:
+            suggestions.append("⚠️ 機構資金權重偏高，建議降低到10%以下（yfinance數據支持有限）")
+        
+        if suggestions:
+            for suggestion in suggestions:
+                st.warning(suggestion)
+        else:
+            st.success("✅ 當前權重設定合理")
+        
+        st.info("💡 **注意**：權重優化需要歷史回測驗證。當前建議基於波段交易的專業經驗。")
+    
+    st.markdown("---")
+    
+    # 市場環境和篩選設定
+    st.subheader("🌍 市場環境與篩選")
+    
+    # 市場環境顯示
+    try:
+        temp_scanner = TaiwanStockScanner()
+        market_env = temp_scanner.check_market_environment()
+        if market_env == '多頭':
+            st.success(f"✅ 當前市場環境：**{market_env}**（適合使用掃描器）")
+        elif market_env == '空頭':
+            st.error(f"⚠️ 當前市場環境：**{market_env}**（建議暫停使用）")
+        elif market_env == '盤整':
+            st.warning(f"⚡ 當前市場環境：**{market_env}**（需謹慎使用）")
+        else:
+            st.info(f"❓ 當前市場環境：**{market_env}**")
+    except:
+        st.info("無法判斷市場環境")
+    
+    # 流動性和基本面篩選設定
+    enable_liquidity = st.checkbox("啟用流動性檢查", value=True, help="排除日均成交量過低的股票")
+    min_volume = st.number_input("最低日均成交量", min_value=100000, value=1000000, step=100000, 
+                                 help="低於此成交量的股票將被排除（建議：100萬股）")
+    enable_fundamental = st.checkbox("啟用基本面篩選", value=True, help="排除財務狀況惡化的股票")
+    
     st.markdown("---")
     
     # 技術參數
@@ -334,7 +396,7 @@ if scan_button and not st.session_state.is_scanning:
     else:
         st.session_state.is_scanning = True
         
-        # 創建掃描器
+        # 創建掃描器（包含新的篩選參數）
         scanner = TaiwanStockScanner(
             trend_weight=trend_weight,
             momentum_weight=momentum_weight,
@@ -345,7 +407,10 @@ if scan_button and not st.session_state.is_scanning:
             ma_long=ma_long,
             vol_multiplier=vol_mult,
             atr_period=atr_period,
-            stop_loss_atr_mult=stop_loss_mult
+            stop_loss_atr_mult=stop_loss_mult,
+            min_avg_volume=min_volume,
+            enable_fundamental_filter=enable_fundamental,
+            enable_liquidity_check=enable_liquidity
         )
         
         # 進度顯示
