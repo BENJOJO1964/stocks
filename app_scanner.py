@@ -797,3 +797,66 @@ elif st.session_state.scan_results is not None and not st.session_state.is_scann
 if st.session_state.is_scanning:
     st.warning("⏳ 正在掃描中，請稍候...")
 
+# === 新增功能：把今天結果送到自動化系統 ===
+# 檢查是否有掃描結果
+if st.session_state.scan_results is not None and not st.session_state.is_scanning:
+    st.markdown("---")
+    st.markdown("### 自動化系統整合")
+    
+    # Webhook URL（佔位變數，未來可配置）
+    WEBHOOK_URL = "https://your-webhook-url-here.com/api/stock-results"
+    
+    # 按鈕
+    send_button = st.button(
+        "📤 把今天結果送到自動化系統",
+        type="primary",
+        use_container_width=True,
+        help="將當前掃描結果以JSON格式發送到自動化系統"
+    )
+    
+    if send_button:
+        try:
+            # 讀取目前畫面已存在、已計算完成的結果
+            results_df = st.session_state.scan_results.copy()
+            
+            # 將DataFrame轉換為JSON格式（records格式，每行一個字典）
+            results_json = results_df.to_dict(orient='records')
+            
+            # 準備要發送的數據（包含時間戳和數據）
+            payload = {
+                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "data": results_json
+            }
+            
+            # 導入requests（如果尚未導入）
+            try:
+                import requests
+            except ImportError:
+                st.error("❌ 錯誤：缺少 requests 套件。請執行：pip install requests")
+                st.stop()
+            
+            # 發送POST請求到webhook（目前為佔位URL）
+            # 注意：實際使用時，請替換WEBHOOK_URL為真實的webhook地址
+            with st.spinner("正在發送數據到自動化系統..."):
+                try:
+                    response = requests.post(
+                        WEBHOOK_URL,
+                        json=payload,
+                        timeout=10,
+                        headers={'Content-Type': 'application/json'}
+                    )
+                    
+                    if response.status_code == 200:
+                        st.success("✅ 成功發送數據到自動化系統！")
+                        st.json(payload)  # 可選：顯示發送的數據預覽
+                    else:
+                        st.warning(f"⚠️ 伺服器回應：{response.status_code} - {response.text}")
+                        
+                except requests.exceptions.RequestException as e:
+                    st.error(f"❌ 發送失敗：{str(e)}")
+                    st.info("💡 提示：目前使用的是佔位URL，請先設定正確的webhook地址")
+            
+        except Exception as e:
+            st.error(f"❌ 處理數據時發生錯誤：{str(e)}")
+            st.exception(e)
+
