@@ -850,9 +850,9 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
     st.markdown("---")
     st.markdown("### 自動化系統整合")
     
-    # Webhook URL（n8n自動化平台）
-    # n8n webhook接收股票掃描結果
-    WEBHOOK_URL = "https://rbben521.app.n8n.cloud/webhook-test/1f97e020-8327-45df-9c56-0304124a3628"
+    # Webhook URL（Make.com自動化平台）
+    # Make.com webhook接收股票掃描結果
+    WEBHOOK_URL = "https://hook.eu1.make.com/tqwwyii3k2pb69jxtuh3qqab0ce1hgd3"
     IS_PLACEHOLDER_URL = "your-webhook-url-here.com" in WEBHOOK_URL
     
     # 按鈕
