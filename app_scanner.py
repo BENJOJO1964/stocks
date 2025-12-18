@@ -826,8 +826,52 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
             # 讀取目前畫面已存在、已計算完成的結果
             results_df = st.session_state.scan_results.copy()
             
+            # 處理無法JSON序列化的類型（Timestamp、numpy類型等）
+            # 將Timestamp轉換為字符串，將numpy類型轉換為Python原生類型
+            import numpy as np
+            import pandas as pd
+            
+            # 複製DataFrame以避免修改原始數據
+            df_for_json = results_df.copy()
+            
+            # 遍歷所有列，處理Timestamp和numpy類型
+            for col in df_for_json.columns:
+                # 將Timestamp轉換為字符串
+                if pd.api.types.is_datetime64_any_dtype(df_for_json[col]):
+                    df_for_json[col] = df_for_json[col].astype(str)
+                # 將numpy類型轉換為Python原生類型
+                elif pd.api.types.is_integer_dtype(df_for_json[col]):
+                    df_for_json[col] = df_for_json[col].astype(object).where(pd.notna(df_for_json[col]), None)
+                elif pd.api.types.is_float_dtype(df_for_json[col]):
+                    df_for_json[col] = df_for_json[col].astype(object).where(pd.notna(df_for_json[col]), None)
+                # 處理其他可能的numpy類型
+                else:
+                    df_for_json[col] = df_for_json[col].astype(object).where(pd.notna(df_for_json[col]), None)
+            
             # 將DataFrame轉換為JSON格式（records格式，每行一個字典）
-            results_json = results_df.to_dict(orient='records')
+            # 使用date_format='iso'確保日期格式正確
+            results_json = df_for_json.to_dict(orient='records')
+            
+            # 再次清理：確保所有值都是JSON可序列化的
+            def clean_value(val):
+                if pd.isna(val) or val is None:
+                    return None
+                elif isinstance(val, (pd.Timestamp, pd.Timedelta)):
+                    return str(val)
+                elif isinstance(val, (np.integer, np.floating)):
+                    return float(val) if isinstance(val, np.floating) else int(val)
+                elif isinstance(val, np.ndarray):
+                    return val.tolist()
+                else:
+                    return val
+            
+            # 清理每個字典中的值
+            cleaned_results_json = []
+            for record in results_json:
+                cleaned_record = {k: clean_value(v) for k, v in record.items()}
+                cleaned_results_json.append(cleaned_record)
+            
+            results_json = cleaned_results_json
             
             # 準備要發送的數據（包含時間戳和數據）
             payload = {
