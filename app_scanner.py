@@ -443,12 +443,26 @@ if scan_button and not st.session_state.is_scanning:
                 # 合併股票名稱和股票代碼到同一列
                 if '股票代碼' in display_df.columns and '股票名稱' in display_df.columns:
                     # 創建合併列：股票名稱 (股票代碼)
-                    display_df['股票'] = display_df.apply(
-                        lambda row: f"{row['股票名稱']} ({row['股票代碼']})" 
-                        if pd.notna(row['股票名稱']) and pd.notna(row['股票代碼']) 
-                        else (row['股票代碼'] if pd.notna(row['股票代碼']) else ''),
-                        axis=1
-                    )
+                    # 如果名稱和代碼一樣，只顯示一個
+                    def format_stock_name(row):
+                        stock_code = row['股票代碼'] if pd.notna(row['股票代碼']) else ''
+                        stock_name = row['股票名稱'] if pd.notna(row['股票名稱']) else ''
+                        
+                        if not stock_code:
+                            return ''
+                        
+                        # 如果名稱和代碼一樣，只顯示代碼
+                        if stock_name == stock_code:
+                            return stock_code
+                        
+                        # 如果名稱是空的或無效，只顯示代碼
+                        if not stock_name or stock_name == '' or stock_name == stock_code:
+                            return stock_code
+                        
+                        # 正常情況：名稱 (代碼)
+                        return f"{stock_name} ({stock_code})"
+                    
+                    display_df['股票'] = display_df.apply(format_stock_name, axis=1)
                     # 移除原來的兩列
                     display_df = display_df.drop(columns=['股票代碼', '股票名稱'])
                     # 將合併列移到最前面（在族群之後）
@@ -464,17 +478,39 @@ if scan_button and not st.session_state.is_scanning:
                 # 再次確保索引是唯一的（應用樣式前）
                 display_df = display_df.reset_index(drop=True)
                 
-                # 刪除重複的族群列（如果有族群_1, 族群_2等重複列）
-                if display_df.columns.duplicated().any() or any(col.startswith('族群_') for col in display_df.columns):
-                    # 找出所有族群相關的列
-                    group_cols = [col for col in display_df.columns if col.startswith('族群')]
-                    # 只保留第一個族群列
-                    if len(group_cols) > 1:
-                        # 保留'族群'，刪除'族群_1', '族群_2'等
+                # 刪除重複的族群列（更徹底的方法）
+                # 找出所有族群相關的列（包括族群、族群_1、族群_2等）
+                group_cols = [col for col in display_df.columns if '族群' in col]
+                if len(group_cols) > 1:
+                    # 只保留第一個'族群'列（如果存在），否則保留第一個族群相關列
+                    if '族群' in group_cols:
                         cols_to_drop = [col for col in group_cols if col != '族群']
-                        display_df = display_df.drop(columns=cols_to_drop)
+                    else:
+                        # 如果沒有純'族群'列，只保留第一個
+                        cols_to_drop = group_cols[1:]
+                    display_df = display_df.drop(columns=cols_to_drop)
                 
-                # 確保族群列在第一個位置
+                # 如果還有重複的列名（非族群相關），也需要處理
+                if display_df.columns.duplicated().any():
+                    # 找出重複的列名
+                    duplicated_cols = display_df.columns[display_df.columns.duplicated()].unique()
+                    for col in duplicated_cols:
+                        # 保留第一個，刪除其他重複的
+                        cols_with_same_name = [c for c in display_df.columns if c == col]
+                        if len(cols_with_same_name) > 1:
+                            # 保留第一個，刪除其他的
+                            indices_to_drop = []
+                            found_first = False
+                            for idx, c in enumerate(display_df.columns):
+                                if c == col:
+                                    if found_first:
+                                        indices_to_drop.append(idx)
+                                    else:
+                                        found_first = True
+                            if indices_to_drop:
+                                display_df = display_df.drop(columns=display_df.columns[indices_to_drop])
+                
+                # 確保族群列在第一個位置（如果存在）
                 if '族群' in display_df.columns:
                     other_cols = [c for c in display_df.columns if c != '族群']
                     display_df = display_df[['族群'] + other_cols]
