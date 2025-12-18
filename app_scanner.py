@@ -850,9 +850,9 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
     st.markdown("---")
     st.markdown("### 自動化系統整合")
     
-    # Webhook URL（佔位變數，未來可配置）
-    # 如果是佔位URL，請替換為真實的webhook地址
-    WEBHOOK_URL = "https://your-webhook-url-here.com/api/stock-results"
+    # Webhook URL（n8n自動化平台）
+    # n8n webhook接收股票掃描結果
+    WEBHOOK_URL = "https://rbben521.app.n8n.cloud/webhook-test/1f97e020-8327-45df-9c56-0304124a3628"
     IS_PLACEHOLDER_URL = "your-webhook-url-here.com" in WEBHOOK_URL
     
     # 按鈕
