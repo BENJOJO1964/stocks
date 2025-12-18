@@ -1,0 +1,537 @@
+"""
+台灣股市掃描器 - Streamlit應用
+專業評分系統，掃描全市場股票
+"""
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+from stock_scanner import TaiwanStockScanner
+import threading
+import time
+
+# 頁面配置
+st.set_page_config(
+    page_title="台灣股市掃描器",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# 初始化session state
+if 'scan_results' not in st.session_state:
+    st.session_state.scan_results = None
+if 'is_scanning' not in st.session_state:
+    st.session_state.is_scanning = False
+
+# 標題
+st.title("📊 台灣股市掃描器")
+st.markdown("**專業評分系統 - 全市場掃描**")
+st.markdown("---")
+
+# === 左側邊欄：設定參數 ===
+with st.sidebar:
+    st.header("⚙️ 掃描參數")
+    
+    # 股票列表選擇
+    st.subheader("📋 股票列表")
+    
+    # 固定使用16支預設股票（不允許添加其他股票）
+    default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
+    stock_list = list(default_tickers.keys())
+    
+    st.info(f"📋 固定掃描列表：{len(stock_list)} 支台灣高Alpha股票")
+    
+    # 顯示族群分類（只讀）
+    with st.expander("📊 查看股票列表", expanded=False):
+        for sector in sorted(set(default_tickers.values())):
+            stocks_in_sector = [ticker for ticker, s in default_tickers.items() if s == sector]
+            st.markdown(f"**{sector}**: {', '.join(stocks_in_sector)}")
+    
+    st.warning("⚠️ 注意：系統只掃描上述16支預設股票，不接受其他股票代號。")
+    
+    st.markdown("---")
+    
+    # 評分權重設定
+    st.subheader("🎯 評分權重")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        trend_weight = st.slider("趨勢權重", 0.0, 1.0, 0.40, 0.05, help="趨勢條件權重（40%）")
+        momentum_weight = st.slider("動量權重", 0.0, 1.0, 0.30, 0.05, help="動量條件權重（30%）")
+    
+    with col2:
+        rs_weight = st.slider("相對強度權重", 0.0, 1.0, 0.20, 0.05, help="相對強度權重（20%）")
+        inst_weight = st.slider("機構資金權重", 0.0, 1.0, 0.10, 0.05, help="機構資金權重（10%）")
+    
+    # 權重總和檢查
+    total_weight = trend_weight + momentum_weight + rs_weight + inst_weight
+    if abs(total_weight - 1.0) > 0.01:
+        st.warning(f"⚠️ 權重總和應為100%，目前：{total_weight*100:.1f}%")
+        # 自動正規化
+        trend_weight = trend_weight / total_weight
+        momentum_weight = momentum_weight / total_weight
+        rs_weight = rs_weight / total_weight
+        inst_weight = inst_weight / total_weight
+    
+    st.markdown("---")
+    
+    # 技術參數
+    st.subheader("📈 技術參數")
+    
+    # 說明
+    with st.expander("📖 技術參數說明（點擊查看詳細）", expanded=False):
+        st.markdown("""
+        ### 技術參數的意義和作用
+        
+        **1. 最低分數閾值（70分）**
+        - **作用**：這是**評分門檻**（不是選股門檻）
+        - **意義**：系統會顯示所有16支股票，但只有總分 >= 70分的會被標記為"強買入"或"買入"信號
+        - **說明**：固定16支股票都會顯示，此參數用來判斷買入信號的強弱
+        - **建議**：70分是較高標準，如果想要更多買入信號，可以降低到60-65分
+        
+        **2. 短期均線（20日）**
+        - **作用**：計算20日移動平均線（MA20）
+        - **意義**：代表**短期趨勢**方向
+        - **判斷**：股價 > MA20 = 短期上漲趨勢
+        - **用途**：用於趨勢評分（權重40%）
+        
+        **3. 長期均線（60日）**
+        - **作用**：計算60日移動平均線（MA60）
+        - **意義**：代表**長期趨勢**方向
+        - **判斷**：MA20 > MA60 = 中長期上漲趨勢
+        - **用途**：用於趨勢評分（權重40%）
+        - **組合條件**：收盤價 > MA20 > MA60 = 強勢上升趨勢 ✅
+        
+        **4. 成交量倍數（1.2倍）**
+        - **作用**：判斷是否有**動量**（資金流入）
+        - **計算**：當日成交量 > 1.2 × 過去5日均量
+        - **意義**：成交量放大 = 市場關注度高，有資金進場
+        - **用途**：用於動量評分（權重30%）
+        - **建議**：1.2-1.5倍是合理範圍，過高可能表示異常波動
+        
+        **5. ATR週期（14日）**
+        - **作用**：計算平均真實波幅（Average True Range）
+        - **意義**：衡量股票的**波動幅度**
+        - **用途**：
+          - 用於計算停損價（風險控制）
+          - ATR越大 = 股票波動越大 = 停損距離要設遠一點
+        
+        **6. 停損ATR倍數（2.0倍）**
+        - **作用**：計算**建議停損價**
+        - **公式**：停損價 = 買入價 - (ATR × 2.0)
+        - **意義**：風險控制，如果股價跌破停損價，應該出場
+        - **建議**：
+          - 1.5倍 = 緊停損（適合短線）
+          - 2.0倍 = 標準停損（適合中線）
+          - 3.0倍 = 寬停損（適合長線）
+        
+        ---
+        
+        **📌 總結**：這些參數控制選股策略的嚴格程度。參數越嚴格，選出的股票越少，但質量可能更高。
+        """)
+    
+    min_score = st.number_input(
+        "最低分數閾值",
+        min_value=0.0,
+        max_value=100.0,
+        value=70.0,
+        step=5.0,
+        help="評分門檻：所有16支股票都會顯示，但會標記哪些股票符合此標準（分數>=此值標記為強買入/買入）"
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        ma_short = st.number_input(
+            "短期均線（日）", 
+            min_value=5, max_value=50, value=20, step=5,
+            help="計算20日移動平均線，判斷短期趨勢"
+        )
+        vol_mult = st.number_input(
+            "成交量倍數", 
+            min_value=1.0, max_value=3.0, value=1.2, step=0.1,
+            help="當日成交量需大於均量的幾倍（1.2=120%）"
+        )
+    
+    with col2:
+        ma_long = st.number_input(
+            "長期均線（日）", 
+            min_value=20, max_value=200, value=60, step=5,
+            help="計算60日移動平均線，判斷長期趨勢"
+        )
+        atr_period = st.number_input(
+            "ATR週期（日）", 
+            min_value=5, max_value=30, value=14, step=1,
+            help="計算ATR的天數（衡量波動幅度）"
+        )
+    
+    stop_loss_mult = st.number_input(
+        "停損ATR倍數",
+        min_value=1.0,
+        max_value=5.0,
+        value=2.0,
+        step=0.1,
+        help="停損價 = 買入價 - (ATR × 此倍數)。2.0倍是標準設定"
+    )
+    
+    st.markdown("---")
+    
+    # 掃描按鈕
+    scan_button = st.button(
+        "🚀 開始掃描（全市場）",
+        type="primary",
+        use_container_width=True,
+        disabled=st.session_state.is_scanning,
+        help="開始掃描所有股票"
+    )
+
+# === 主區域：顯示結果 ===
+# 說明區域
+with st.expander("📖 波段交易策略說明", expanded=False):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        ### 波段交易策略（持有2-4周）
+        
+        **1. 趨勢基礎（必須滿足）**
+        - 條件：收盤價 > MA20 > MA60
+        - 意義：確認上升趨勢後才考慮買入
+        
+        **2. 進場點優化**
+        - **Golden Cross**：MA5 > MA20（加分）
+        - **接近支撐**：價格在MA20的3%以內（加分）
+        - 邏輯：在支撐線附近買入，不是追高
+        
+        **3. 評分系統（總分100分）**
+        - 趨勢評分（40%）：趨勢基礎 + 進場點
+        - 動量評分（30%）：成交量放大
+        - 相對強度（20%）：vs TAIEX（250天）
+        - 機構資金（10%）：中性分數
+        
+        **4. 風險控制**
+        - **初始停損**：買入價 - (ATR × 2.0)
+        - **移動停損**：價格上漲時，停損價跟著上移（鎖定利潤）
+        """)
+    
+    with col2:
+        st.markdown("""
+        ### 波段狀態說明
+        
+        **初升段**
+        - 剛突破MA20
+        - MA5剛上穿MA20
+        - 適合：積極進場
+        
+        **主升段**
+        - 強勢上漲
+        - 價格遠高於MA20（>10%）
+        - 適合：持有或部分獲利
+        
+        **拉回找買點**
+        - 價格接近MA20（3%以內）
+        - 等待支撐確認
+        - 適合：觀察或小量試單
+        
+        ### 使用方式
+        
+        1. **點擊「開始掃描」**
+        2. **查看「波段狀態」**判斷進場時機
+        3. **查看「建議持有天數」**規劃出場時間
+        4. **嚴格遵守「移動停損價」**
+        """)
+        
+        st.info("💡 **波段交易原則**：趨勢確認 → 支撐買入 → 移動停損 → 持有2-4周")
+
+# 掃描進度和結果
+if scan_button and not st.session_state.is_scanning:
+    # 使用固定的16支股票（不允許其他股票）
+    stock_list = list(TaiwanStockScanner.DEFAULT_TICKERS.keys())
+    
+    if not stock_list:
+        st.error("❌ 股票列表為空")
+    else:
+        st.session_state.is_scanning = True
+        
+        # 創建掃描器
+        scanner = TaiwanStockScanner(
+            trend_weight=trend_weight,
+            momentum_weight=momentum_weight,
+            relative_strength_weight=rs_weight,
+            institutional_weight=inst_weight,
+            min_score=min_score,
+            ma_short=ma_short,
+            ma_long=ma_long,
+            vol_multiplier=vol_mult,
+            atr_period=atr_period,
+            stop_loss_atr_mult=stop_loss_mult
+        )
+        
+        # 進度顯示
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        results_placeholder = st.empty()
+        
+        # 執行掃描（使用線程以便實時更新）
+        try:
+            status_text.text(f"🚀 開始掃描 {len(stock_list)} 支股票...")
+            
+            # 存儲進度信息
+            progress_info = {'current': 0, 'total': len(stock_list), 'stock': ''}
+            
+            def progress_callback(current, total, stock_id):
+                progress_info['current'] = current
+                progress_info['total'] = total
+                progress_info['stock'] = stock_id
+                progress = current / total
+                progress_bar.progress(progress)
+                status_text.text(f"📊 掃描中... ({current}/{total}) - 當前：{stock_id}")
+            
+            # 執行掃描（暫時移除log_callback，先讓功能正常運行）
+            results = scanner.scan_stocks(stock_list, progress_callback=progress_callback)
+            
+            progress_bar.progress(1.0)
+            st.session_state.scan_results = results
+            st.session_state.is_scanning = False
+            
+            # 顯示結果（顯示所有掃描到的股票，包括無信號的）
+            if len(results) > 0:
+                # 計算有信號的股票數（評分>0）
+                signal_count = len(results[results['策略評分'] > 0]) if '策略評分' in results.columns else len(results)
+                status_text.text(f"✅ 掃描完成！共掃描 {len(results)} 支股票，其中 {signal_count} 支有信號")
+                
+                # 顯示數據日期警告
+                if '數據日期' in results.columns:
+                    latest_data_date = results['數據日期'].max()
+                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    if latest_data_date < today_str:
+                        st.warning(f"⚠️ **數據日期說明**：目前顯示的是 {latest_data_date} 的數據。台灣股市收盤後，yfinance數據更新通常需要15-20分鐘。當前日期：{today_str}")
+                
+                st.markdown("---")
+                
+                # 獲取並格式化數據日期（顯示在標題旁邊）
+                data_date_display = ""
+                if '數據日期' in results.columns:
+                    latest_data_date = results['數據日期'].max()
+                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    if pd.notna(latest_data_date) and latest_data_date not in ['無數據', 'Data Error', 'Yahoo Finance未找到', '無法獲取']:
+                        try:
+                            date_part = str(latest_data_date)[:10] if len(str(latest_data_date)) >= 10 else str(latest_data_date)
+                            if date_part == today_str:
+                                data_date_display = f"✅ 數據日期：{date_part}（最新）"
+                            else:
+                                try:
+                                    date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                                    today_obj = datetime.strptime(today_str, '%Y-%m-%d')
+                                    days_diff = (today_obj - date_obj).days
+                                    if days_diff == 1:
+                                        data_date_display = f"📅 數據日期：{date_part}（昨天）"
+                                    elif days_diff > 1:
+                                        data_date_display = f"⚠️ 數據日期：{date_part}（{days_diff}天前）"
+                                    else:
+                                        data_date_display = f"📅 數據日期：{date_part}"
+                                except:
+                                    data_date_display = f"📅 數據日期：{date_part}"
+                        except:
+                            data_date_display = ""
+                
+                # 顯示標題和數據日期
+                col_title, col_date = st.columns([3, 2])
+                with col_title:
+                    st.subheader("📊 股票訊號表（依評分排序）")
+                with col_date:
+                    if data_date_display:
+                        st.markdown(f"<div style='margin-top: 1.5rem; font-size: 0.9rem;'>{data_date_display}</div>", unsafe_allow_html=True)
+                
+                # 準備顯示表格（波段交易專用）
+                # 不再在表格中顯示數據日期（已移至標題旁）
+                display_columns = [
+                    '族群', '股票代碼', '股票名稱', '當前股價',
+                    'MA5', 'MA20', 'MA60',
+                    '策略評分', '買入訊號', '波段狀態', '建議持有天數',
+                    '建議停損價(ATR)', '移動停損價', '建議停利價'
+                ]
+                
+                # 只保留存在的欄位
+                display_columns = [col for col in display_columns if col in results.columns]
+                display_df = results[display_columns].copy()
+                
+                # 格式化數值
+                if '當前股價' in display_df.columns:
+                    display_df['當前股價'] = display_df['當前股價'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
+                
+                # 格式化均線數值（讓用戶看到計算結果）
+                for ma_col in ['MA5', 'MA20', 'MA60']:
+                    if ma_col in display_df.columns:
+                        display_df[ma_col] = display_df[ma_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
+                
+                if '策略評分' in display_df.columns:
+                    display_df['策略評分'] = display_df['策略評分'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
+                
+                # 格式化停損停利價格
+                for price_col in ['建議停損價(ATR)', '移動停損價', '建議停利價']:
+                    if price_col in display_df.columns:
+                        display_df[price_col] = display_df[price_col].apply(
+                            lambda x: f"{x:.2f}" if pd.notna(x) else "N/A"
+                        )
+                
+                # 格式化建議持有天數
+                if '建議持有天數' in display_df.columns:
+                    display_df['建議持有天數'] = display_df['建議持有天數'].apply(
+                        lambda x: f"{int(x)}天" if pd.notna(x) and x > 0 else "N/A"
+                    )
+                
+                # 應用樣式（突出顯示）
+                def highlight_score(val):
+                    if isinstance(val, str) and val != "N/A":
+                        try:
+                            score = float(val)
+                            if score >= 80:
+                                return 'background-color: #90EE90; font-weight: bold'  # 綠色
+                            elif score >= 70:
+                                return 'background-color: #FFE4B5; font-weight: bold'  # 黃色
+                            elif score >= 50:
+                                return 'background-color: #E6E6FA'  # 淺紫色
+                        except:
+                            pass
+                    return ''
+                
+                def highlight_signal(val):
+                    if val == '強買入':
+                        return 'background-color: #90EE90; font-weight: bold; color: #006400'
+                    elif val == '買入':
+                        return 'background-color: #FFE4B5; font-weight: bold'
+                    return ''
+                
+                def highlight_stop_loss(val):
+                    if isinstance(val, str) and val != "N/A":
+                        return 'background-color: #FFB6C1; font-weight: bold; color: #8B0000'  # 紅色
+                    return ''
+                
+                styled_df = display_df.style.applymap(
+                    highlight_score, subset=['策略評分']
+                ).applymap(
+                    highlight_signal, subset=['買入訊號']
+                ).applymap(
+                    highlight_stop_loss, subset=['建議停損價(ATR)']
+                )
+                
+                st.dataframe(
+                    styled_df,
+                    use_container_width=True,
+                    height=500
+                )
+                
+                # 統計摘要（確保數字準確，顯示所有16支）
+                st.markdown("---")
+                
+                # 計算各種統計
+                total_scanned = len(results)
+                expected_count = len(TaiwanStockScanner.DEFAULT_TICKERS)  # 應該是16支
+                
+                if '策略評分' in results.columns:
+                    signal_count = len(results[results['策略評分'] > 0])
+                    no_data_count = len(results[results['買入訊號'] == '無數據']) if '買入訊號' in results.columns else 0
+                    valid_count = total_scanned - no_data_count  # 有效數據的股票數
+                    avg_score = results[results['策略評分'] > 0]['策略評分'].mean() if signal_count > 0 else 0
+                else:
+                    signal_count = 0
+                    no_data_count = 0
+                    valid_count = total_scanned
+                    avg_score = 0
+                
+                if '買入訊號' in results.columns:
+                    strong_buy = len(results[results['買入訊號'] == '強買入'])
+                else:
+                    strong_buy = 0
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("已掃描股票", total_scanned, delta=f"預期{expected_count}支")
+                    if total_scanned < expected_count:
+                        st.caption(f"⚠️ 缺少 {expected_count - total_scanned} 支")
+                with col2:
+                    st.metric("有效數據", valid_count)
+                    if no_data_count > 0:
+                        st.caption(f"⚠️ {no_data_count} 支無數據")
+                with col3:
+                    st.metric("有信號股票", signal_count)
+                    if signal_count > 0:
+                        st.metric("平均評分", f"{avg_score:.1f}")
+                with col4:
+                    st.metric("強買入", strong_buy)
+                
+                # 導出按鈕
+                csv = results.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="💾 導出完整CSV報告",
+                    data=csv,
+                    file_name=f"stock_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                
+                # 視覺化
+                st.markdown("---")
+                st.subheader("📊 分數分布")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if '股票代碼' in results.columns and '策略評分' in results.columns:
+                        chart_df = results.set_index('股票代碼')['策略評分'].head(20)
+                        st.bar_chart(chart_df)
+                
+                with col2:
+                    if '策略評分' in results.columns:
+                        score_dist = pd.cut(results['策略評分'], bins=[0, 50, 70, 80, 100], labels=['50以下', '50-70', '70-80', '80以上'])
+                        st.bar_chart(score_dist.value_counts().sort_index())
+                
+            else:
+                status_text.text("ℹ️ 掃描完成，但未獲取到任何股票數據")
+                st.error("❌ 未能掃描到任何股票數據。可能原因：\n"
+                        "- 網絡連接問題\n"
+                        "- yfinance API暫時無法訪問\n"
+                        "- 數據獲取錯誤\n\n"
+                        "請檢查網絡連接後重新掃描。")
+        
+        except Exception as e:
+            st.session_state.is_scanning = False
+            st.error(f"❌ 掃描過程中發生錯誤: {str(e)}")
+            st.exception(e)
+
+# 顯示上次掃描結果
+elif st.session_state.scan_results is not None and not st.session_state.is_scanning:
+    results = st.session_state.scan_results
+    
+    st.subheader("📋 上次掃描結果")
+    st.info(f"找到 {len(results)} 支符合條件的股票")
+    
+    # 確保結果已按總分排序
+    results = results.sort_values('Total_Score', ascending=False).reset_index(drop=True)
+    
+    # 確保族群欄位存在
+    if '族群' not in results.columns:
+        results['族群'] = results['Stock_ID'].map(TaiwanStockScanner.DEFAULT_TICKERS).fillna('其他')
+    
+    # 顯示結果表格（包含族群）
+    display_cols = ['Stock_ID', '族群', 'Total_Score', 'Close', 'Trend_Score', 'Momentum_Score', 'RS_Score', 'Stop_Loss_Price', 'Risk_Percent']
+    display_cols = [col for col in display_cols if col in results.columns]
+    
+    st.dataframe(
+        results[display_cols],
+        use_container_width=True,
+        height=400
+    )
+    
+    csv = results.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="💾 導出CSV報告",
+        data=csv,
+        file_name=f"stock_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+
+# 掃描中的狀態
+if st.session_state.is_scanning:
+    st.warning("⏳ 正在掃描中，請稍候...")
+
