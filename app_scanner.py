@@ -22,6 +22,11 @@ if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 if 'is_scanning' not in st.session_state:
     st.session_state.is_scanning = False
+if 'stock_list' not in st.session_state:
+    # 默認使用預設16支股票
+    st.session_state.stock_list = list(TaiwanStockScanner.DEFAULT_TICKERS.keys())
+if 'use_custom_list' not in st.session_state:
+    st.session_state.use_custom_list = False
 
 # 標題
 st.title("📊 台灣股市掃描器")
@@ -35,19 +40,90 @@ with st.sidebar:
     # 股票列表選擇
     st.subheader("📋 股票列表")
     
-    # 固定使用16支預設股票（不允許添加其他股票）
-    default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
-    stock_list = list(default_tickers.keys())
+    # 選擇模式：預設列表 或 手動輸入
+    use_custom_list = st.checkbox("使用自定義股票列表", value=False, help="勾選後可以手動輸入股票代碼")
     
-    st.info(f"📋 固定掃描列表：{len(stock_list)} 支台灣高Alpha股票")
-    
-    # 顯示族群分類（只讀）
-    with st.expander("📊 查看股票列表", expanded=False):
-        for sector in sorted(set(default_tickers.values())):
-            stocks_in_sector = [ticker for ticker, s in default_tickers.items() if s == sector]
-            st.markdown(f"**{sector}**: {', '.join(stocks_in_sector)}")
-    
-    st.warning("⚠️ 注意：系統只掃描上述16支預設股票，不接受其他股票代號。")
+    if use_custom_list:
+        # 手動輸入模式
+        st.info("📝 請輸入股票代碼（每行一個，或使用逗號分隔）")
+        
+        # 顯示預設列表作為參考
+        default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
+        default_list_text = '\n'.join(default_tickers.keys())
+        
+        custom_stocks = st.text_area(
+            "股票代碼輸入",
+            value="",
+            height=150,
+            help="範例：\n2330.TW\n2317.TW\n2382.TW\n\n或：2330.TW, 2317.TW, 2382.TW\n\n注意：上市股票使用.TW，上櫃股票使用.TWO",
+            placeholder="每行輸入一個股票代碼，例如：\n2330.TW\n2317.TW\n2382.TW"
+        )
+        
+        # 解析用戶輸入的股票代碼
+        if custom_stocks.strip():
+            # 處理多種輸入格式：換行分隔、逗號分隔、空格分隔
+            lines = custom_stocks.strip().replace(',', '\n').replace('，', '\n').replace(' ', '\n').split('\n')
+            custom_stock_list = []
+            for line in lines:
+                ticker = line.strip().upper()
+                if ticker:
+                    # 驗證格式：必須包含.TW或.TWO
+                    if '.TW' in ticker or '.TWO' in ticker:
+                        custom_stock_list.append(ticker)
+                    elif ticker.isdigit() and len(ticker) == 4:
+                        # 如果只輸入4位數字，自動添加.TW
+                        custom_stock_list.append(f"{ticker}.TW")
+            
+            stock_list = custom_stock_list
+            if stock_list:
+                st.session_state.stock_list = stock_list
+                st.success(f"✅ 已輸入 {len(stock_list)} 支股票")
+                # 顯示輸入的股票列表
+                with st.expander("📊 查看自定義股票列表", expanded=True):
+                    # 按族群分組顯示（如果有的話）
+                    default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
+                    custom_by_sector = {}
+                    custom_others = []
+                    
+                    for ticker in stock_list:
+                        if ticker in default_tickers:
+                            sector = default_tickers[ticker]
+                            if sector not in custom_by_sector:
+                                custom_by_sector[sector] = []
+                            custom_by_sector[sector].append(ticker)
+                        else:
+                            custom_others.append(ticker)
+                    
+                    # 顯示有族群分類的股票
+                    for sector in sorted(custom_by_sector.keys()):
+                        st.markdown(f"**{sector}**: {', '.join(custom_by_sector[sector])}")
+                    
+                    # 顯示沒有族群分類的股票
+                    if custom_others:
+                        st.markdown(f"**其他**: {', '.join(custom_others)}")
+            else:
+                st.warning("⚠️ 未檢測到有效的股票代碼，將使用預設列表")
+                default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
+                stock_list = list(default_tickers.keys())
+                st.session_state.stock_list = stock_list
+        else:
+            st.info("💡 未輸入股票代碼，將使用預設16支股票")
+            default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
+            stock_list = list(default_tickers.keys())
+            st.session_state.stock_list = stock_list
+    else:
+        # 使用預設列表
+        default_tickers = TaiwanStockScanner.DEFAULT_TICKERS
+        stock_list = list(default_tickers.keys())
+        st.session_state.stock_list = stock_list
+        
+        st.info(f"📋 預設掃描列表：{len(stock_list)} 支台灣高Alpha股票")
+        
+        # 顯示族群分類（只讀）
+        with st.expander("📊 查看股票列表", expanded=False):
+            for sector in sorted(set(default_tickers.values())):
+                stocks_in_sector = [ticker for ticker, s in default_tickers.items() if s == sector]
+                st.markdown(f"**{sector}**: {', '.join(stocks_in_sector)}")
     
     st.markdown("---")
     
@@ -244,8 +320,13 @@ with st.expander("📖 波段交易策略說明", expanded=False):
 
 # 掃描進度和結果
 if scan_button and not st.session_state.is_scanning:
-    # 使用固定的16支股票（不允許其他股票）
-    stock_list = list(TaiwanStockScanner.DEFAULT_TICKERS.keys())
+    # 使用側邊欄中設定的股票列表（可能是預設或自定義）
+    if 'stock_list' not in st.session_state:
+        # 如果側邊欄還沒有設定，使用預設列表
+        stock_list = list(TaiwanStockScanner.DEFAULT_TICKERS.keys())
+        st.session_state.stock_list = stock_list
+    else:
+        stock_list = st.session_state.stock_list
     
     if not stock_list:
         st.error("❌ 股票列表為空")

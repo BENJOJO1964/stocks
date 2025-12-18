@@ -630,11 +630,7 @@ class TaiwanStockScanner:
                 if progress_callback:
                     progress_callback(i + 1, total, stock_id)
                 
-                # 只掃描預設列表中的股票，其他股票跳過
-                if stock_id not in self.DEFAULT_TICKERS:
-                    continue
-                
-                # 獲取族群分類
+                # 獲取族群分類（如果在預設列表中，使用預設分類；否則使用"其他"）
                 sector = self.DEFAULT_TICKERS.get(stock_id, '其他')
                 
                 # 獲取數據（使用1年數據，100%真實數據）
