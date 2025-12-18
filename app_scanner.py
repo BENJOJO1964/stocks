@@ -516,6 +516,23 @@ if scan_button and not st.session_state.is_scanning:
                         return 'background-color: #FFB6C1; font-weight: bold; color: #8B0000'  # 紅色
                     return ''
                 
+                # 確保在應用樣式前，DataFrame的索引是唯一的（重置索引）
+                display_df = display_df.reset_index(drop=True)
+                
+                # 確保列名唯一（如果有重複列名，會導致樣式錯誤）
+                if display_df.columns.duplicated().any():
+                    # 如果有重複列名，為重複的列名添加後綴
+                    new_columns = []
+                    seen = {}
+                    for col in display_df.columns:
+                        if col in seen:
+                            seen[col] += 1
+                            new_columns.append(f"{col}_{seen[col]}")
+                        else:
+                            seen[col] = 0
+                            new_columns.append(col)
+                    display_df.columns = new_columns
+                
                 styled_df = display_df.style.applymap(
                     highlight_score, subset=['策略評分']
                 ).applymap(
