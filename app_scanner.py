@@ -851,7 +851,9 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
     st.markdown("### 自動化系統整合")
     
     # Webhook URL（佔位變數，未來可配置）
+    # 如果是佔位URL，請替換為真實的webhook地址
     WEBHOOK_URL = "https://your-webhook-url-here.com/api/stock-results"
+    IS_PLACEHOLDER_URL = "your-webhook-url-here.com" in WEBHOOK_URL
     
     # 按鈕
     send_button = st.button(
@@ -863,6 +865,59 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
     
     if send_button:
         try:
+            # 檢查是否為佔位URL
+            if IS_PLACEHOLDER_URL:
+                st.info("💡 **Webhook URL 未配置**\n\n目前使用的是佔位URL。要使用此功能，請：\n1. 在代碼中將 `WEBHOOK_URL` 替換為真實的webhook地址\n2. 或在側邊欄配置webhook URL（需開發）\n\n📋 **預覽本次要發送的數據結構：**")
+                
+                # 讀取並準備數據（用於預覽）
+                results_df = st.session_state.scan_results.copy()
+                
+                # 處理無法JSON序列化的類型
+                import numpy as np
+                import pandas as pd
+                
+                df_for_json = results_df.copy()
+                
+                for col in df_for_json.columns:
+                    if pd.api.types.is_datetime64_any_dtype(df_for_json[col]):
+                        df_for_json[col] = df_for_json[col].astype(str)
+                    elif pd.api.types.is_integer_dtype(df_for_json[col]):
+                        df_for_json[col] = df_for_json[col].astype(object).where(pd.notna(df_for_json[col]), None)
+                    elif pd.api.types.is_float_dtype(df_for_json[col]):
+                        df_for_json[col] = df_for_json[col].astype(object).where(pd.notna(df_for_json[col]), None)
+                    else:
+                        df_for_json[col] = df_for_json[col].astype(object).where(pd.notna(df_for_json[col]), None)
+                
+                results_json = df_for_json.to_dict(orient='records')
+                
+                def clean_value(val):
+                    if pd.isna(val) or val is None:
+                        return None
+                    elif isinstance(val, (pd.Timestamp, pd.Timedelta)):
+                        return str(val)
+                    elif isinstance(val, (np.integer, np.floating)):
+                        return float(val) if isinstance(val, np.floating) else int(val)
+                    elif isinstance(val, np.ndarray):
+                        return val.tolist()
+                    else:
+                        return val
+                
+                cleaned_results_json = []
+                for record in results_json:
+                    cleaned_record = {k: clean_value(v) for k, v in record.items()}
+                    cleaned_results_json.append(cleaned_record)
+                
+                payload = {
+                    "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "data": cleaned_results_json
+                }
+                
+                # 顯示數據預覽
+                st.json(payload)
+                st.info(f"📊 共準備發送 {len(cleaned_results_json)} 筆股票數據")
+                return  # 不發送請求，只顯示預覽
+            
+            # 真實URL，執行發送流程
             # 讀取目前畫面已存在、已計算完成的結果
             results_df = st.session_state.scan_results.copy()
             
@@ -926,8 +981,7 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
                 st.error("❌ 錯誤：缺少 requests 套件。請執行：pip install requests")
                 st.stop()
             
-            # 發送POST請求到webhook（目前為佔位URL）
-            # 注意：實際使用時，請替換WEBHOOK_URL為真實的webhook地址
+            # 發送POST請求到webhook
             with st.spinner("正在發送數據到自動化系統..."):
                 try:
                     response = requests.post(
@@ -945,7 +999,7 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
                         
                 except requests.exceptions.RequestException as e:
                     st.error(f"❌ 發送失敗：{str(e)}")
-                    st.info("💡 提示：目前使用的是佔位URL，請先設定正確的webhook地址")
+                    st.info("💡 請檢查webhook URL是否正確，以及網絡連接是否正常")
             
         except Exception as e:
             st.error(f"❌ 處理數據時發生錯誤：{str(e)}")
