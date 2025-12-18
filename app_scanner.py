@@ -437,6 +437,9 @@ if scan_button and not st.session_state.is_scanning:
                 display_columns = [col for col in display_columns if col in results.columns]
                 display_df = results[display_columns].copy()
                 
+                # 確保索引是唯一的（重置索引）
+                display_df = display_df.reset_index(drop=True)
+                
                 # 合併股票名稱和股票代碼到同一列
                 if '股票代碼' in display_df.columns and '股票名稱' in display_df.columns:
                     # 創建合併列：股票名稱 (股票代碼)
@@ -449,16 +452,17 @@ if scan_button and not st.session_state.is_scanning:
                     # 移除原來的兩列
                     display_df = display_df.drop(columns=['股票代碼', '股票名稱'])
                     # 將合併列移到最前面（在族群之後）
-                    cols = list(display_df.columns)
-                    cols.remove('股票')
+                    cols = [col for col in display_df.columns if col != '股票']
                     display_df = display_df[['族群', '股票'] + cols]
                 elif '股票代碼' in display_df.columns:
                     # 如果只有股票代碼，重命名為股票
                     display_df = display_df.rename(columns={'股票代碼': '股票'})
                     # 將股票列移到族群之後
-                    cols = list(display_df.columns)
-                    cols.remove('股票')
+                    cols = [col for col in display_df.columns if col != '股票']
                     display_df = display_df[['族群', '股票'] + cols]
+                
+                # 再次確保索引是唯一的（應用樣式前）
+                display_df = display_df.reset_index(drop=True)
                 
                 # 格式化數值
                 if '當前股價' in display_df.columns:
