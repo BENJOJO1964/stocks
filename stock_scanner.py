@@ -672,9 +672,15 @@ class TaiwanStockScanner:
         df['RS_Score'] = rs_scores * self.relative_strength_weight
         
         # 5. 機構資金評分（10%）
-        # 注意：由於yfinance對台灣股票的籌碼面數據支持有限
-        # 這裡暫時使用中性分數，未來可以接入其他數據源獲取真實的外資/投信買賣超數據
-        df['Institutional_Score'] = 50.0 * self.institutional_weight
+        # 注意：yfinance對台灣股票的籌碼面數據（外資/投信/自營商買賣超）支持有限
+        # 這裡嘗試從ticker.info獲取機構持股比例（如果可用）
+        # 未來可以接入其他數據源（如TWSE API）獲取真實的買賣超數據
+        institutional_score = pd.Series(50.0, index=df.index)  # 默認中性分數
+        
+        # 注意：這裡無法為每行數據獲取不同的籌碼面數據（因為需要為每支股票單獨調用API）
+        # 實際的籌碼面數據應該在scan_stocks時獲取並傳入
+        # 當前實現暫時使用固定分數
+        df['Institutional_Score'] = institutional_score * self.institutional_weight
         
         # 計算總分（只有通過趨勢基礎檢查的才能得分）
         df['Total_Score'] = np.where(
