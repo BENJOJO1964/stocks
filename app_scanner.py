@@ -915,9 +915,9 @@ if st.session_state.scan_results is not None and not st.session_state.is_scannin
                 # 顯示數據預覽
                 st.json(payload)
                 st.info(f"📊 共準備發送 {len(cleaned_results_json)} 筆股票數據")
-                return  # 不發送請求，只顯示預覽
-            
-            # 真實URL，執行發送流程
+                # 不發送請求，只顯示預覽（使用else分支處理真實URL情況）
+            else:
+                # 真實URL，執行發送流程
             # 讀取目前畫面已存在、已計算完成的結果
             results_df = st.session_state.scan_results.copy()
             
