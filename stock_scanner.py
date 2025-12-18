@@ -899,15 +899,11 @@ class TaiwanStockScanner:
                 # 獲取族群分類（如果在預設列表中，使用預設分類；否則使用"其他"）
                 sector = self.DEFAULT_TICKERS.get(stock_id, '其他')
                 
-                # 檢查市場環境（只掃描多頭市場）
+                # 檢查市場環境（僅在第一次掃描時檢查，用於顯示警告）
+                # 注意：用戶已確認只會在多頭市場使用，但我們還是繼續掃描並顯示警告
                 if i == 0:  # 只在第一次掃描時檢查市場環境
                     market_env = self.check_market_environment()
-                    if market_env == '空頭':
-                        # 在空頭市場跳過掃描
-                        continue
-                    elif market_env == '盤整':
-                        # 在盤整市場也可以掃描，但可能需要更嚴格條件
-                        pass
+                    # 不跳過掃描，讓用戶自行決定（因為用戶說只會在多頭市場使用）
                 
                 # 獲取數據（使用1年數據，100%真實數據）
                 # 注意：系統會自動處理上櫃股票（如果.TW找不到，會自動嘗試.TWO）
