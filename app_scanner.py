@@ -464,6 +464,21 @@ if scan_button and not st.session_state.is_scanning:
                 # 再次確保索引是唯一的（應用樣式前）
                 display_df = display_df.reset_index(drop=True)
                 
+                # 刪除重複的族群列（如果有族群_1, 族群_2等重複列）
+                if display_df.columns.duplicated().any() or any(col.startswith('族群_') for col in display_df.columns):
+                    # 找出所有族群相關的列
+                    group_cols = [col for col in display_df.columns if col.startswith('族群')]
+                    # 只保留第一個族群列
+                    if len(group_cols) > 1:
+                        # 保留'族群'，刪除'族群_1', '族群_2'等
+                        cols_to_drop = [col for col in group_cols if col != '族群']
+                        display_df = display_df.drop(columns=cols_to_drop)
+                
+                # 確保族群列在第一個位置
+                if '族群' in display_df.columns:
+                    other_cols = [c for c in display_df.columns if c != '族群']
+                    display_df = display_df[['族群'] + other_cols]
+                
                 # 格式化數值
                 if '當前股價' in display_df.columns:
                     display_df['當前股價'] = display_df['當前股價'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
