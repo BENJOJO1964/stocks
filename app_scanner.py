@@ -768,22 +768,62 @@ elif st.session_state.scan_results is not None and not st.session_state.is_scann
     st.info(f"找到 {len(results)} 支符合條件的股票")
     
     # 確保結果已按總分排序
-    # 防守判斷：檢查 results 是否為空或是否存在 'Total_Score' 欄位
-    if len(results) > 0 and 'Total_Score' in results.columns:
-        results = results.sort_values('Total_Score', ascending=False).reset_index(drop=True)
+    # 防守判斷：檢查 results 是否為空或是否存在排序欄位（可能是'策略評分'或'Total_Score'）
+    sort_column = None
+    if '策略評分' in results.columns:
+        sort_column = '策略評分'
+    elif 'Total_Score' in results.columns:
+        sort_column = 'Total_Score'
+    
+    if len(results) > 0 and sort_column:
+        results = results.sort_values(sort_column, ascending=False).reset_index(drop=True)
     else:
         if len(results) == 0:
             st.warning("⚠️ 今日無符合條件股票")
-        elif 'Total_Score' not in results.columns:
+        elif not sort_column:
             st.warning("⚠️ 掃描結果缺少必要欄位，無法進行排序")
     
     # 確保族群欄位存在
     if '族群' not in results.columns:
-        results['族群'] = results['Stock_ID'].map(TaiwanStockScanner.DEFAULT_TICKERS).fillna('其他')
+        # 嘗試從不同可能的股票代碼欄位獲取族群
+        stock_id_col = None
+        if '股票代碼' in results.columns:
+            stock_id_col = '股票代碼'
+        elif 'Stock_ID' in results.columns:
+            stock_id_col = 'Stock_ID'
+        
+        if stock_id_col:
+            results['族群'] = results[stock_id_col].map(TaiwanStockScanner.DEFAULT_TICKERS).fillna('其他')
+        else:
+            results['族群'] = '其他'
     
-    # 顯示結果表格（包含族群）
-    display_cols = ['Stock_ID', '族群', 'Total_Score', 'Close', 'Trend_Score', 'Momentum_Score', 'RS_Score', 'Stop_Loss_Price', 'Risk_Percent']
-    display_cols = [col for col in display_cols if col in results.columns]
+    # 顯示結果表格（使用與主掃描流程一致的列名）
+    # 優先使用主掃描流程的列名，如果不存在則使用舊的列名
+    display_cols = []
+    
+    # 主掃描流程的列名（優先）
+    main_cols = ['族群', '股票代碼', '股票名稱', '當前股價', 'MA5', 'MA20', 'MA60', 
+                 '策略評分', '買入訊號', '波段狀態', '建議持有天數',
+                 '建議停損價(ATR)', '移動停損價', '建議停利價']
+    
+    # 舊版本的列名（後備）
+    old_cols = ['Stock_ID', '族群', 'Total_Score', 'Close', 'Trend_Score', 
+                'Momentum_Score', 'RS_Score', 'Stop_Loss_Price', 'Risk_Percent']
+    
+    # 優先使用主掃描流程的列名
+    for col in main_cols:
+        if col in results.columns:
+            display_cols.append(col)
+    
+    # 如果主掃描流程的列名都沒有，則使用舊的列名
+    if not display_cols:
+        for col in old_cols:
+            if col in results.columns:
+                display_cols.append(col)
+    
+    # 如果還是沒有，顯示所有可用的列
+    if not display_cols:
+        display_cols = list(results.columns)
     
     st.dataframe(
         results[display_cols],
