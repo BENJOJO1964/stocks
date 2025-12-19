@@ -435,6 +435,9 @@ class TaiwanStockScanner:
         if not self.enable_fundamental_filter:
             return (True, '基本面篩選已停用', {})
         
+        # 判斷是否為美股（純字母代碼，不含.TW或.TWO）
+        is_us_stock = not ('.TW' in stock_id or '.TWO' in stock_id)
+        
         try:
             ticker = yf.Ticker(stock_id)
             info = ticker.info
@@ -458,10 +461,13 @@ class TaiwanStockScanner:
                     issues.append(f"EPS為負({eps:.2f})")
             
             # 檢查負債比率（如果可用）
+            # 對於美股，負債比率標準可能不同，使用更寬鬆的標準
             if 'debtToEquity' in info and pd.notna(info['debtToEquity']):
                 debt_ratio = info['debtToEquity']
                 financial_data['負債比率'] = f"{debt_ratio:.2f}"
-                if debt_ratio > 100:  # 負債比率過高
+                # 台股：>100視為過高；美股：>200視為過高（美股通常負債比率較高）
+                debt_threshold = 200 if is_us_stock else 100
+                if debt_ratio > debt_threshold:
                     issues.append(f"負債比率過高({debt_ratio:.1f})")
             
             # 檢查流動比率（如果可用）
@@ -472,14 +478,25 @@ class TaiwanStockScanner:
                     issues.append(f"流動比率不足({current_ratio:.2f})")
             
             # 判斷是否健康
+            # 對於美股，即使有輕微問題也允許通過（因為yfinance對美股數據支持可能有限）
             if issues:
-                return (False, '; '.join(issues), financial_data)
+                # 如果是美股，只阻止嚴重的財務問題（EPS為負或營收大幅下降）
+                if is_us_stock:
+                    severe_issues = [issue for issue in issues if 'EPS為負' in issue or '營收大幅下降' in issue]
+                    if severe_issues:
+                        return (False, '; '.join(severe_issues), financial_data)
+                    else:
+                        # 美股只有輕微問題，允許通過
+                        return (True, f'財務狀況可接受（{"; ".join(issues)}）', financial_data)
+                else:
+                    return (False, '; '.join(issues), financial_data)
             else:
                 return (True, '財務狀況正常', financial_data)
                 
         except Exception as e:
-            # 如果無法獲取財務數據，不阻止（因為yfinance對台灣股票支持有限）
-            return (True, f'無法獲取財務數據', {})
+            # 如果無法獲取財務數據，不阻止（因為yfinance對某些股票支持有限）
+            # 對於美股，如果無法獲取基本面數據，也允許通過（避免誤判）
+            return (True, f'無法獲取財務數據（允許通過）', {})
     
     def get_institutional_data(self, stock_id: str) -> dict:
         """
@@ -982,28 +999,12 @@ class TaiwanStockScanner:
                         continue
                 
                 # 檢查基本面（如果啟用）
+                # 注意：即使基本面檢查失敗，也繼續處理數據（避免誤判導致數據無法顯示）
                 is_fundamental_healthy, fundamental_reason, financial_data = self.check_fundamental(stock_id)
+                fundamental_warning = None
                 if not is_fundamental_healthy and self.enable_fundamental_filter:
-                    # 基本面不佳，跳過或標記
-                    stock_name = self.STOCK_NAMES.get(stock_id, stock_id)
-                    results.append({
-                        '族群': sector,
-                        '股票代碼': stock_id,
-                        '股票名稱': stock_name,
-                        '當前股價': np.nan,
-                        '策略評分': 0.0,
-                        '買入訊號': '基本面不佳',
-                        '建議停損價(ATR)': np.nan,
-                        '移動停損價': np.nan,
-                        '建議停利價': np.nan,
-                        '數據日期': fundamental_reason,
-                        '波段狀態': '基本面不佳',
-                        '建議持有天數': 0,
-                        'MA5': np.nan,
-                        'MA20': np.nan,
-                        'MA60': np.nan,
-                    })
-                    continue
+                    # 基本面不佳，記錄警告但不跳過（讓數據可以正常顯示）
+                    fundamental_warning = fundamental_reason
                 
                 if df is None or len(df) < 60:  # 至少需要60個交易日才能計算MA60和基本指標
                     # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
@@ -1194,6 +1195,11 @@ class TaiwanStockScanner:
                 else:
                     holding_days = 0  # 沒有買入訊號，不建議持有
                 
+                # 如果有基本面警告，在數據日期中標記（但不影響數據顯示）
+                data_date_final = data_date_str
+                if fundamental_warning:
+                    data_date_final = f"{data_date_str} (⚠️{fundamental_warning})"
+                
                 # 移動停損價
                 trailing_stop = latest.get('Trailing_Stop_Price', latest['Stop_Loss_Price'])
                 
@@ -1208,7 +1214,7 @@ class TaiwanStockScanner:
                     '建議停損價(ATR)': latest['Stop_Loss_Price'],
                     '移動停損價': trailing_stop,
                     '建議停利價': take_profit_price,
-                    '數據日期': data_date_str,
+                    '數據日期': data_date_final,  # 包含基本面警告（如果有）
                     '波段狀態': swing_status,
                     '建議持有天數': holding_days,
                     'MA5': latest.get('MA5', np.nan),
