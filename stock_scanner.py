@@ -131,29 +131,55 @@ class TaiwanStockScanner:
         end_date = datetime.now()
         
         def try_fetch(ticker_symbol, period_str, start_dt, end_dt):
-            """嘗試獲取數據的內部函數（使用yf.download支持auto_adjust和threads）"""
+            """嘗試獲取數據的內部函數（優先使用ticker.history，更穩定）"""
             hist_data = None
             try:
-                # 使用yf.download支持auto_adjust和threads參數
+                ticker = yf.Ticker(ticker_symbol)
+                
+                # 優先使用period方式（更可靠）
                 if period_str:
-                    hist_data = yf.download(
-                        ticker_symbol, 
-                        period=period_str,
-                        auto_adjust=True,
-                        threads=True,
-                        progress=False
-                    )
+                    try:
+                        hist_data = ticker.history(period=period_str)
+                    except:
+                        pass
                 
                 # 如果period失敗或為空，使用start/end方式
                 if hist_data is None or hist_data.empty:
-                    hist_data = yf.download(
-                        ticker_symbol,
-                        start=start_dt.strftime('%Y-%m-%d'), 
-                        end=end_dt.strftime('%Y-%m-%d'),
-                        auto_adjust=True,
-                        threads=True,
-                        progress=False
-                    )
+                    try:
+                        hist_data = ticker.history(
+                            start=start_dt.strftime('%Y-%m-%d'), 
+                            end=end_dt.strftime('%Y-%m-%d')
+                        )
+                    except:
+                        pass
+                
+                # 如果ticker.history失敗，嘗試yf.download作為備選
+                if hist_data is None or hist_data.empty:
+                    try:
+                        if period_str:
+                            hist_data = yf.download(
+                                ticker_symbol, 
+                                period=period_str,
+                                progress=False,
+                                show_errors=False
+                            )
+                        
+                        if hist_data is None or hist_data.empty:
+                            hist_data = yf.download(
+                                ticker_symbol,
+                                start=start_dt.strftime('%Y-%m-%d'), 
+                                end=end_dt.strftime('%Y-%m-%d'),
+                                progress=False,
+                                show_errors=False
+                            )
+                        
+                        # yf.download返回MultiIndex columns，需要處理
+                        if hist_data is not None and not hist_data.empty:
+                            if isinstance(hist_data.columns, pd.MultiIndex):
+                                # 如果是多級列名，取第一級（或直接展平）
+                                hist_data.columns = hist_data.columns.droplevel(1) if hist_data.columns.nlevels > 1 else hist_data.columns
+                    except Exception as e2:
+                        return None, f"Both methods failed: {str(e2)}"
             except Exception as e:
                 return None, str(e)
             
