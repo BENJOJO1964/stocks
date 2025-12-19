@@ -1282,12 +1282,18 @@ class TaiwanStockScanner:
                 # 移動停損價
                 trailing_stop = latest.get('Trailing_Stop_Price', latest['Stop_Loss_Price'])
                 
+                # 獲取前一日股價（用於顏色判斷）
+                prev_price = np.nan
+                if len(scored_df) >= 2:
+                    prev_price = scored_df.iloc[-2]['Close']  # 前一個交易日的收盤價
+                
                 # 使用正確的列名（波段交易專用）
                 results.append({
                     '族群': sector,
                     '股票代碼': stock_id,
                     '股票名稱': stock_name,
                     '當前股價': current_price,  # 確保是最新的Close價格
+                    '前一日股價': prev_price,  # 前一日收盤價（用於顏色判斷）
                     '策略評分': latest['Total_Score'],
                     '買入訊號': signal,
                     '建議停損價(ATR)': latest['Stop_Loss_Price'],

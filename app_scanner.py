@@ -583,8 +583,9 @@ if scan_button and not st.session_state.is_scanning:
                 
                 # 準備顯示表格（波段交易專用）
                 # 不再在表格中顯示數據日期（已移至標題旁）
+                # 注意：'前一日股價' 需要保留在數據中用於顏色判斷，但不顯示在最終表格中
                 display_columns = [
-                    '族群', '股票代碼', '股票名稱', '當前股價', '前一日股價',
+                    '族群', '股票代碼', '股票名稱', '當前股價', '前一日股價',  # 前一日股價用於顏色判斷
                     'MA5', 'MA20', 'MA50', 'MA60', 'MA200',
                     '策略評分', '買入訊號', '波段狀態', '建議持有天數',
                     '建議停損價(ATR)', '移動停損價', '建議停利價'
@@ -672,11 +673,18 @@ if scan_button and not st.session_state.is_scanning:
                     other_cols = [c for c in display_df.columns if c != '族群']
                     display_df = display_df[['族群'] + other_cols]
                 
+                # 確保前一日股價存在於display_df中（用於顏色判斷）
+                # 如果前一日股價不在display_columns中，需要添加它（但不顯示）
+                if '前一日股價' not in display_df.columns and '前一日股價' in results.columns:
+                    display_df['前一日股價'] = results['前一日股價']
+                
                 # 格式化數值（保留原始數值用於顏色判斷）
                 # 先創建一個副本保存原始數值
                 if '當前股價' in display_df.columns:
-                    display_df['_當前股價_原始'] = display_df['當前股價'].copy()  # 保存原始數值
-                    display_df['當前股價'] = display_df['當前股價'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
+                    # 保存原始數值（用於顏色比較）
+                    display_df['_當前股價_原始'] = display_df['當前股價'].copy()
+                    # 格式化顯示
+                    display_df['當前股價'] = display_df['當前股價'].apply(lambda x: f"{x:.2f}" if pd.notna(x) and isinstance(x, (int, float)) else ("Data Error" if pd.isna(x) else str(x)))
                 
                 # 格式化均線數值（讓用戶看到計算結果）
                 for ma_col in ['MA5', 'MA20', 'MA50', 'MA60', 'MA200']:
@@ -862,13 +870,13 @@ if scan_button and not st.session_state.is_scanning:
                     highlight_price, axis=1, subset=['當前股價'] if '當前股價' in display_df_for_style.columns else []
                 )
                 
+                # 注意：前一日股價需要保留到樣式應用之後才移除，因為highlight_price函數需要使用它
                 # 在顯示前移除臨時列和前一日股價（不顯示給用戶）
                 # 但樣式已經應用了，我們只需要從顯示的數據中移除這些列
                 columns_to_remove = []
                 if '_當前股價_原始' in display_df_for_style.columns:
                     columns_to_remove.append('_當前股價_原始')
-                if '前一日股價' in display_df_for_style.columns:
-                    columns_to_remove.append('前一日股價')
+                # 注意：前一日股價要在應用所有樣式之後才移除
                 
                 # 從樣式的底層數據中移除不需要的列
                 # 注意：styled_df.data 是只讀的，我們需要創建一個新的DataFrame並重新應用樣式
@@ -988,8 +996,41 @@ if scan_button and not st.session_state.is_scanning:
                             return pd.Series([''], index=row.index)
                         
                         final_styled_df = final_styled_df.apply(highlight_price_row, axis=1, subset=['當前股價'])
+                    
+                    # 在顯示前，從最終DataFrame中移除輔助列（前一日股價和_當前股價_原始）
+                    # 但要保留樣式
+                    if '前一日股價' in display_df_clean.columns:
+                        display_df_clean = display_df_clean.drop(columns=['前一日股價'])
+                    if '_當前股價_原始' in display_df_clean.columns:
+                        display_df_clean = display_df_clean.drop(columns=['_當前股價_原始'])
+                    
+                    # 重新應用樣式到清理後的DataFrame（價格顏色已在上面應用，這裡只應用其他樣式）
+                    final_styled_df = display_df_clean.style.applymap(
+                        highlight_score, subset=['策略評分'] if '策略評分' in display_df_clean.columns else []
+                    ).applymap(
+                        highlight_signal, subset=['買入訊號'] if '買入訊號' in display_df_clean.columns else []
+                    ).applymap(
+                        highlight_stop_loss, subset=['建議停損價(ATR)'] if '建議停損價(ATR)' in display_df_clean.columns else []
+                    )
+                    
+                    # 重新應用價格顏色（因為列已經改變）
+                    if '當前股價' in display_df_clean.columns:
+                        final_styled_df = final_styled_df.apply(highlight_price_row, axis=1, subset=['當前股價'])
                 else:
-                    final_styled_df = styled_df
+                    # 如果沒有需要移除的列，直接使用styled_df，但仍需移除前一日股價（如果存在）
+                    if '前一日股價' in display_df_for_style.columns:
+                        display_df_final = display_df_for_style.drop(columns=['前一日股價'])
+                        final_styled_df = display_df_final.style.applymap(
+                            highlight_score, subset=['策略評分'] if '策略評分' in display_df_final.columns else []
+                        ).applymap(
+                            highlight_signal, subset=['買入訊號'] if '買入訊號' in display_df_final.columns else []
+                        ).applymap(
+                            highlight_stop_loss, subset=['建議停損價(ATR)'] if '建議停損價(ATR)' in display_df_final.columns else []
+                        ).apply(
+                            highlight_price, axis=1, subset=['當前股價'] if '當前股價' in display_df_final.columns else []
+                        )
+                    else:
+                        final_styled_df = styled_df
                 
                 st.dataframe(
                     final_styled_df,
