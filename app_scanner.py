@@ -678,12 +678,29 @@ if scan_button and not st.session_state.is_scanning:
                                         else:
                                             return ''
                                 
+                                # 確保current_val是數字類型
+                                if isinstance(current_val, str):
+                                    try:
+                                        current_val = float(current_val)
+                                    except (ValueError, TypeError):
+                                        return ''
+                                
+                                if not isinstance(current_val, (int, float)) or pd.isna(current_val):
+                                    return ''
+                                
                                 # 如果沒有前一日價格，使用MA5作為參考
                                 if pd.isna(prev_val) and 'MA5' in df_with_data.columns:
                                     prev_val = df_with_data.loc[row_idx, 'MA5']
                                 
+                                # 確保prev_val是數字類型
+                                if isinstance(prev_val, str):
+                                    try:
+                                        prev_val = float(prev_val)
+                                    except (ValueError, TypeError):
+                                        return ''
+                                
                                 # 如果有有效數據且當前價格和前一日價格都有效
-                                if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
+                                if pd.notna(current_val) and pd.notna(prev_val) and isinstance(prev_val, (int, float)) and prev_val > 0:
                                     if current_val > prev_val:
                                         return 'color: #FF0000; font-weight: bold'  # 漲：紅色
                                     elif current_val < prev_val:
