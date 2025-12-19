@@ -693,20 +693,34 @@ if scan_button and not st.session_state.is_scanning:
                                 current_val = row.get('_當前股價_原始', row.get('當前股價', np.nan))
                                 prev_val = row.get('前一日股價', np.nan)
                                 
+                                # 確保current_val是數值類型
                                 if isinstance(current_val, str):
                                     try:
                                         current_val = float(current_val)
                                     except:
                                         return ''
                                 
+                                # 如果沒有前一日股價，使用MA5作為參考
                                 if pd.isna(prev_val) and 'MA5' in row.index:
                                     prev_val = row.get('MA5', np.nan)
                                 
-                                if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
-                                    if current_val > prev_val:
-                                        return 'color: #FF0000; font-weight: bold'
-                                    elif current_val < prev_val:
-                                        return 'color: #00AA00; font-weight: bold'
+                                # 確保prev_val是數值類型
+                                if isinstance(prev_val, str):
+                                    try:
+                                        prev_val = float(prev_val)
+                                    except:
+                                        return ''
+                                
+                                # 進行數值比較
+                                if pd.notna(current_val) and pd.notna(prev_val):
+                                    try:
+                                        if isinstance(prev_val, (int, float)) and prev_val > 0:
+                                            if current_val > prev_val:
+                                                return 'color: #FF0000; font-weight: bold'
+                                            elif current_val < prev_val:
+                                                return 'color: #00AA00; font-weight: bold'
+                                    except (TypeError, ValueError):
+                                        return ''
                         except Exception as e:
                             pass
                         return ''
@@ -777,20 +791,34 @@ if scan_button and not st.session_state.is_scanning:
                                 prev_val = display_df_for_style.loc[row_idx, '前一日股價'] if '前一日股價' in display_df_for_style.columns else np.nan
                                 current_val = display_df_for_style.loc[row_idx, '_當前股價_原始'] if '_當前股價_原始' in display_df_for_style.columns else display_df_for_style.loc[row_idx, '當前股價']
                                 
+                                # 確保current_val是數值類型
                                 if isinstance(current_val, str):
                                     try:
                                         current_val = float(current_val)
                                     except:
                                         return ''
                                 
+                                # 如果沒有前一日股價，使用MA5作為參考
                                 if pd.isna(prev_val) and 'MA5' in display_df_for_style.columns:
                                     prev_val = display_df_for_style.loc[row_idx, 'MA5']
                                 
-                                if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
-                                    if current_val > prev_val:
-                                        return 'color: #FF0000; font-weight: bold'
-                                    elif current_val < prev_val:
-                                        return 'color: #00AA00; font-weight: bold'
+                                # 確保prev_val是數值類型
+                                if isinstance(prev_val, str):
+                                    try:
+                                        prev_val = float(prev_val)
+                                    except:
+                                        return ''
+                                
+                                # 進行數值比較
+                                if pd.notna(current_val) and pd.notna(prev_val):
+                                    try:
+                                        if isinstance(prev_val, (int, float)) and prev_val > 0:
+                                            if current_val > prev_val:
+                                                return 'color: #FF0000; font-weight: bold'
+                                            elif current_val < prev_val:
+                                                return 'color: #00AA00; font-weight: bold'
+                                    except (TypeError, ValueError):
+                                        return ''
                             return ''
                         
                         final_styled_df = final_styled_df.apply(
