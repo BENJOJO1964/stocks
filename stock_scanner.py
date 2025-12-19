@@ -31,7 +31,7 @@ class TaiwanStockScanner:
         '1504.TW': '重電',
         '3019.TW': '機器人',
         '4979.TWO': '光通訊(上櫃)',  # 上櫃股票必須使用.TWO後綴
-        '6451.TW': '光通訊',
+        '6451.TWO': '光通訊',  # 改為.TWO（上櫃股票）
         '3450.TW': '光通訊'
     }
     
@@ -51,7 +51,7 @@ class TaiwanStockScanner:
         '1504.TW': '東元',
         '3019.TW': '亞光',
         '4979.TWO': '華星光',  # 更新為.TWO
-        '6451.TW': '訊芯-KY',
+        '6451.TWO': '訊芯-KY',  # 改為.TWO（上櫃股票）
         '3450.TW': '聯鈞'
     }
     
@@ -107,90 +107,97 @@ class TaiwanStockScanner:
         self.benchmark_ticker_tw = '^TWII'  # 台灣加權指數
         self.benchmark_ticker_us = '^GSPC'  # 美股標普500
     
-    def fetch_stock_data(self, stock_id: str, years: int = 1) -> pd.DataFrame:
+    def fetch_stock_data(self, stock_id: str, years: int = 2, allow_fallback: bool = True) -> tuple:
         """
-        獲取股票數據（使用2年數據以準確計算MA60和RS）
-        智能處理上櫃股票：如果.TW找不到，自動嘗試.TWO
+        獲取股票數據（增強版：支持回退和詳細錯誤日誌）
         
         Parameters:
         -----------
         stock_id : str
             股票代號
         years : int
-            獲取多少年的數據（預設2年）
+            獲取多少年的數據（預設2年，用於MA200）
+        allow_fallback : bool
+            如果2年數據失敗，是否回退到1年
         
         Returns:
         --------
-        pd.DataFrame
-            包含OHLCV的真實數據
+        tuple: (df: pd.DataFrame, actual_years: int, error_msg: str)
+            - df: 包含OHLCV的真實數據（如果成功）
+            - actual_years: 實際獲取到的數據年數（用於判斷MA200是否可用）
+            - error_msg: 錯誤訊息（如果失敗）
         """
-        try:
-            ticker = yf.Ticker(stock_id)
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=years * 365)
-            
-            # 優先使用period='1y'獲取最新數據（包含今天如果已收盤）
-            # 如果失敗，再使用start/end方式
+        original_stock_id = stock_id
+        end_date = datetime.now()
+        
+        def try_fetch(ticker_obj, period_str, start_dt, end_dt):
+            """嘗試獲取數據的內部函數"""
             hist_data = None
             try:
-                hist_data = ticker.history(period='1y')
-                if hist_data.empty:
-                    hist_data = ticker.history(start=start_date.strftime('%Y-%m-%d'), 
-                                              end=end_date.strftime('%Y-%m-%d'))
-            except Exception as e1:
-                # 如果period方式失敗，使用start/end
-                try:
-                    hist_data = ticker.history(start=start_date.strftime('%Y-%m-%d'), 
-                                              end=end_date.strftime('%Y-%m-%d'))
-                except Exception as e2:
-                    # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
-                    if stock_id.endswith('.TW') and len(stock_id) == 8:  # 例如：4979.TW
-                        alt_ticker_id = stock_id.replace('.TW', '.TWO')
-                        try:
-                            alt_ticker = yf.Ticker(alt_ticker_id)
-                            try:
-                                hist_data = alt_ticker.history(period='1y')
-                                if hist_data.empty:
-                                    hist_data = alt_ticker.history(start=start_date.strftime('%Y-%m-%d'), 
-                                                                  end=end_date.strftime('%Y-%m-%d'))
-                                # 如果.TWO找到數據，更新stock_id以便後續處理
-                                if hist_data is not None and not hist_data.empty:
-                                    print(f"ℹ️ {stock_id} 在.TW找不到，自動切換到.TWO並成功獲取數據")
-                                    stock_id = alt_ticker_id
-                            except:
-                                pass
-                        except:
-                            pass
-                    
-                    # 如果還是失敗，返回None
-                    if hist_data is None or (hasattr(hist_data, 'empty') and hist_data.empty):
-                        print(f"⚠️ Ticker {stock_id} not found on Yahoo Finance.")
-                        print(f"   請確認：上市股票使用.TW，上櫃股票使用.TWO")
-                        return None
+                # 優先使用period方式
+                if period_str:
+                    hist_data = ticker_obj.history(period=period_str, auto_adjust=True, threads=True)
+                
+                # 如果period失敗或為空，使用start/end方式
+                if hist_data is None or hist_data.empty:
+                    hist_data = ticker_obj.history(
+                        start=start_dt.strftime('%Y-%m-%d'), 
+                        end=end_dt.strftime('%Y-%m-%d'),
+                        auto_adjust=True,
+                        threads=True
+                    )
+            except Exception as e:
+                return None, str(e)
             
             if hist_data is None or hist_data.empty:
-                # 最後一次嘗試：如果是.TW，試試.TWO
-                if stock_id.endswith('.TW') and len(stock_id) == 8:
-                    alt_ticker_id = stock_id.replace('.TW', '.TWO')
-                    try:
-                        alt_ticker = yf.Ticker(alt_ticker_id)
-                        try:
-                            hist_data = alt_ticker.history(period='1y')
-                            if hist_data.empty:
-                                hist_data = alt_ticker.history(start=start_date.strftime('%Y-%m-%d'), 
-                                                              end=end_date.strftime('%Y-%m-%d'))
-                            if hist_data is not None and not hist_data.empty:
-                                print(f"ℹ️ {stock_id} 在.TW找不到，自動切換到.TWO並成功獲取數據")
-                                stock_id = alt_ticker_id
-                        except:
-                            pass
-                    except:
-                        pass
-                
-                if hist_data is None or hist_data.empty:
-                    print(f"⚠️ Ticker {stock_id} not found on Yahoo Finance (no data returned)")
-                    return None
+                return None, "No data returned"
             
+            return hist_data, None
+        
+        # 嘗試獲取指定年數的數據
+        try:
+            ticker = yf.Ticker(stock_id)
+            start_date = end_date - timedelta(days=years * 365)
+            
+            # 嘗試獲取數據
+            hist_data, error = try_fetch(ticker, f"{years}y" if years <= 1 else None, start_date, end_date)
+            
+            # 如果失敗且允許回退，嘗試1年數據
+            if (hist_data is None or hist_data.empty) and allow_fallback and years > 1:
+                print(f"⚠️ {stock_id}: 無法獲取{years}年數據，回退到1年數據...")
+                start_date_1y = end_date - timedelta(days=365)
+                hist_data, error = try_fetch(ticker, "1y", start_date_1y, end_date)
+                actual_years = 1
+            else:
+                actual_years = years
+            
+            # 如果還是失敗，嘗試.TWO（針對上櫃股票）
+            if (hist_data is None or hist_data.empty) and stock_id.endswith('.TW') and len(stock_id) == 8:
+                alt_ticker_id = stock_id.replace('.TW', '.TWO')
+                print(f"ℹ️ {stock_id}: 嘗試.TWO後綴: {alt_ticker_id}")
+                try:
+                    alt_ticker = yf.Ticker(alt_ticker_id)
+                    hist_data, error = try_fetch(alt_ticker, f"{years}y" if years <= 1 else None, start_date, end_date)
+                    
+                    # 如果.TWO也失敗且允許回退，嘗試1年
+                    if (hist_data is None or hist_data.empty) and allow_fallback and years > 1:
+                        start_date_1y = end_date - timedelta(days=365)
+                        hist_data, error = try_fetch(alt_ticker, "1y", start_date_1y, end_date)
+                        actual_years = 1
+                    
+                    if hist_data is not None and not hist_data.empty:
+                        print(f"✅ {stock_id}: 成功從.TWO獲取數據")
+                        stock_id = alt_ticker_id
+                except Exception as e:
+                    error = f"Failed to try .TWO: {str(e)}"
+            
+            # 如果仍然失敗，返回錯誤
+            if hist_data is None or hist_data.empty:
+                error_msg = f"{original_stock_id}: 數據獲取失敗 - {error or 'No data available'}"
+                print(f"❌ {error_msg}")
+                return None, 0, error_msg
+            
+            # 處理數據格式
             df = hist_data.reset_index()
             if 'Date' not in df.columns:
                 df['Date'] = pd.to_datetime(df.index)
@@ -202,7 +209,9 @@ class TaiwanStockScanner:
             available_cols = [col for col in required_cols if col in df.columns]
             
             if len(available_cols) < 6:
-                return None
+                error_msg = f"{stock_id}: 數據不完整（缺少必要欄位）"
+                print(f"❌ {error_msg}")
+                return None, 0, error_msg
             
             df = df[available_cols].copy()
             df = df.sort_values('Date').reset_index(drop=True)
@@ -211,11 +220,15 @@ class TaiwanStockScanner:
             # 填充缺失值
             df = df.ffill().bfill()
             
-            return df
+            print(f"✅ {stock_id}: 成功獲取 {len(df)} 筆數據（約{actual_years}年）")
+            return df, actual_years, None
             
         except Exception as e:
-            print(f"獲取 {stock_id} 數據失敗: {str(e)}")
-            return None
+            error_msg = f"{original_stock_id}: 異常錯誤 - {str(e)}"
+            print(f"❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return None, 0, error_msg
     
     def fetch_benchmark_data(self, years: int = 1, stock_id: Optional[str] = None) -> Optional[pd.DataFrame]:
         """
@@ -268,7 +281,13 @@ class TaiwanStockScanner:
         df['MA20'] = df['Close'].rolling(window=self.ma_short).mean()  # 短期均線
         df['MA50'] = df['Close'].rolling(window=50).mean()  # 中期均線（長期趨勢確認）
         df['MA60'] = df['Close'].rolling(window=self.ma_long).mean()  # 長期均線
-        df['MA200'] = df['Close'].rolling(window=200).mean()  # 超長期均線（長期趨勢保護）
+        
+        # MA200：如果數據不足200個交易日，標記為NaN（而不是Data Error）
+        if len(df) >= 200:
+            df['MA200'] = df['Close'].rolling(window=200).mean()  # 超長期均線（長期趨勢保護）
+        else:
+            df['MA200'] = np.nan  # 數據不足，標記為N/A
+            print(f"ℹ️ 數據不足200個交易日，MA200標記為N/A（僅有{len(df)}筆數據）")
         
         # 成交量均線
         df['MA5_Vol'] = df['Volume'].rolling(window=5).mean()
@@ -972,7 +991,15 @@ class TaiwanStockScanner:
                 # 注意：系統會自動處理上櫃股票（如果.TW找不到，會自動嘗試.TWO）
                 # 波段交易需要至少60個交易日（用於計算MA60和基本指標）
                 # 使用2年數據以準確計算MA200（需要至少200個交易日）
-                df = self.fetch_stock_data(stock_id, years=2)
+                # fetch_stock_data現在返回 (df, actual_years, error_msg)
+                df, actual_data_years, fetch_error = self.fetch_stock_data(stock_id, years=2, allow_fallback=True)
+                
+                # 記錄數據年份（用於判斷MA200是否可用）
+                can_calculate_ma200 = actual_data_years >= 2 and df is not None and len(df) >= 200
+                
+                # 如果獲取失敗，打印詳細錯誤
+                if df is None:
+                    print(f"❌ {stock_id}: {fetch_error or '數據獲取失敗'}")
                 
                 # 檢查流動性
                 if df is not None and len(df) >= 20:
@@ -998,23 +1025,17 @@ class TaiwanStockScanner:
                         })
                         continue
                 
-                # 檢查基本面（如果啟用）
+                # 暫時禁用基本面檢查（讓技術指標優先顯示）
                 # 注意：即使基本面檢查失敗，也繼續處理數據（避免誤判導致數據無法顯示）
-                is_fundamental_healthy, fundamental_reason, financial_data = self.check_fundamental(stock_id)
                 fundamental_warning = None
-                if not is_fundamental_healthy and self.enable_fundamental_filter:
-                    # 基本面不佳，記錄警告但不跳過（讓數據可以正常顯示）
-                    fundamental_warning = fundamental_reason
+                # 暫時跳過基本面檢查
+                # is_fundamental_healthy, fundamental_reason, financial_data = self.check_fundamental(stock_id)
+                # if not is_fundamental_healthy and self.enable_fundamental_filter:
+                #     fundamental_warning = fundamental_reason
                 
                 if df is None or len(df) < 60:  # 至少需要60個交易日才能計算MA60和基本指標
-                    # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
-                    if stock_id.endswith('.TW') and len(stock_id) == 8:
-                        alt_stock_id = stock_id.replace('.TW', '.TWO')
-                        df_alt = self.fetch_stock_data(alt_stock_id, years=2)
-                        if df_alt is not None and len(df_alt) >= 60:
-                            # .TWO成功獲取數據，使用.TWO的ticker
-                            df = df_alt
-                            stock_id = alt_stock_id
+                    # fetch_stock_data已經在內部處理了.TWO的切換，這裡不需要重複處理
+                    pass
                     
                     if df is None or len(df) < 60:
                         # 即使無法獲取數據，也顯示在結果中（標記為無數據）
@@ -1028,16 +1049,12 @@ class TaiwanStockScanner:
                             tw_version = stock_id.replace('.TWO', '.TW')
                             stock_name = self.STOCK_NAMES.get(tw_version, stock_id)
                     
-                    # 檢查錯誤原因
-                    error_msg = '無法獲取'
+                    # 檢查錯誤原因（使用fetch_error中的詳細訊息）
+                    error_msg = fetch_error if fetch_error else '無法獲取'
                     if df is None:
-                        # 嘗試判斷是否需要切換後綴
-                        if stock_id.endswith('.TW') and stock_id not in ['4979.TW']:
-                            # 如果是.TW但找不到，可能是上櫃股票
-                            pass
-                        error_msg = 'Yahoo Finance未找到'
+                        error_msg = fetch_error if fetch_error else 'Yahoo Finance未找到'
                     elif len(df) < 60:
-                        error_msg = '數據不足'
+                        error_msg = f'數據不足（僅{len(df)}筆，需要至少60筆）'
                     
                     results.append({
                         '族群': sector,
@@ -1221,7 +1238,7 @@ class TaiwanStockScanner:
                     'MA20': latest['MA20'],
                     'MA50': latest.get('MA50', np.nan),  # 中期均線（長期趨勢確認）
                     'MA60': latest['MA60'],
-                    'MA200': latest.get('MA200', np.nan),  # 超長期均線（長期趨勢保護）
+                    'MA200': latest.get('MA200', np.nan) if can_calculate_ma200 else np.nan,  # 超長期均線（如果數據足夠則計算）
                     # 保留其他欄位用於內部處理
                     'Date': latest.name,
                     'Volume': latest['Volume'],
