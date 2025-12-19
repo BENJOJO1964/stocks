@@ -130,20 +130,29 @@ class TaiwanStockScanner:
         original_stock_id = stock_id
         end_date = datetime.now()
         
-        def try_fetch(ticker_obj, period_str, start_dt, end_dt):
-            """嘗試獲取數據的內部函數"""
+        def try_fetch(ticker_symbol, period_str, start_dt, end_dt):
+            """嘗試獲取數據的內部函數（使用yf.download支持auto_adjust和threads）"""
             hist_data = None
             try:
-                # 優先使用period方式
-                # 注意：yfinance的history()方法不支持auto_adjust和threads參數，這些只在yf.download()中使用
+                # 使用yf.download支持auto_adjust和threads參數
                 if period_str:
-                    hist_data = ticker_obj.history(period=period_str)
+                    hist_data = yf.download(
+                        ticker_symbol, 
+                        period=period_str,
+                        auto_adjust=True,
+                        threads=True,
+                        progress=False
+                    )
                 
                 # 如果period失敗或為空，使用start/end方式
                 if hist_data is None or hist_data.empty:
-                    hist_data = ticker_obj.history(
+                    hist_data = yf.download(
+                        ticker_symbol,
                         start=start_dt.strftime('%Y-%m-%d'), 
-                        end=end_dt.strftime('%Y-%m-%d')
+                        end=end_dt.strftime('%Y-%m-%d'),
+                        auto_adjust=True,
+                        threads=True,
+                        progress=False
                     )
             except Exception as e:
                 return None, str(e)
@@ -155,17 +164,16 @@ class TaiwanStockScanner:
         
         # 嘗試獲取指定年數的數據
         try:
-            ticker = yf.Ticker(stock_id)
             start_date = end_date - timedelta(days=years * 365)
             
-            # 嘗試獲取數據
-            hist_data, error = try_fetch(ticker, f"{years}y" if years <= 1 else None, start_date, end_date)
+            # 嘗試獲取數據（直接使用ticker符號，yf.download需要字符串）
+            hist_data, error = try_fetch(stock_id, f"{years}y" if years <= 1 else None, start_date, end_date)
             
             # 如果失敗且允許回退，嘗試1年數據
             if (hist_data is None or hist_data.empty) and allow_fallback and years > 1:
                 print(f"⚠️ {stock_id}: 無法獲取{years}年數據，回退到1年數據...")
                 start_date_1y = end_date - timedelta(days=365)
-                hist_data, error = try_fetch(ticker, "1y", start_date_1y, end_date)
+                hist_data, error = try_fetch(stock_id, "1y", start_date_1y, end_date)
                 actual_years = 1
             else:
                 actual_years = years
@@ -175,13 +183,12 @@ class TaiwanStockScanner:
                 alt_ticker_id = stock_id.replace('.TW', '.TWO')
                 print(f"ℹ️ {stock_id}: 嘗試.TWO後綴: {alt_ticker_id}")
                 try:
-                    alt_ticker = yf.Ticker(alt_ticker_id)
-                    hist_data, error = try_fetch(alt_ticker, f"{years}y" if years <= 1 else None, start_date, end_date)
+                    hist_data, error = try_fetch(alt_ticker_id, f"{years}y" if years <= 1 else None, start_date, end_date)
                     
                     # 如果.TWO也失敗且允許回退，嘗試1年
                     if (hist_data is None or hist_data.empty) and allow_fallback and years > 1:
                         start_date_1y = end_date - timedelta(days=365)
-                        hist_data, error = try_fetch(alt_ticker, "1y", start_date_1y, end_date)
+                        hist_data, error = try_fetch(alt_ticker_id, "1y", start_date_1y, end_date)
                         actual_years = 1
                     
                     if hist_data is not None and not hist_data.empty:
