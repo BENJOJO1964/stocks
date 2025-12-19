@@ -84,9 +84,13 @@ with col_main_title:
     st.title("📊 台灣股市掃描器")
 with col_main_date:
     # 顯示日期（如果有）
+    # 優先使用最新的掃描結果日期，如果沒有則使用session state中保存的
     if date_display:
         st.markdown(f"<div style='margin-top: 1.5rem; font-size: 0.95rem; font-weight: 500;'>{date_display}</div>", unsafe_allow_html=True)
         st.session_state.data_date_main = date_display
+    elif 'data_date_main' in st.session_state and st.session_state.data_date_main:
+        # 如果有保存的日期，顯示它
+        st.markdown(f"<div style='margin-top: 1.5rem; font-size: 0.95rem; font-weight: 500;'>{st.session_state.data_date_main}</div>", unsafe_allow_html=True)
 
 st.markdown("**專業評分系統 - 全市場掃描**")
 st.markdown("---")
@@ -379,7 +383,7 @@ with st.sidebar:
     
     # 掃描按鈕
     scan_button = st.button(
-        "🚀 開始掃描（全市場）",
+        "🚀 開始掃描",
         type="primary",
         use_container_width=True,
         disabled=st.session_state.is_scanning,
@@ -577,6 +581,11 @@ if scan_button and not st.session_state.is_scanning:
                 # 更新session state中的日期（用於主標題顯示）
                 if data_date_display:
                     st.session_state.data_date_main = data_date_display
+                    # 觸發重新渲染以顯示日期（使用st.rerun可能會造成循環，所以改用markdown顯示）
+                
+                # 在結果區域頂部顯示日期（確保立即可見）
+                if data_date_display:
+                    st.markdown(f"<div style='text-align: right; margin-bottom: 1rem; font-size: 0.95rem; font-weight: 500;'>{data_date_display}</div>", unsafe_allow_html=True)
                 
                 # 顯示表格標題
                 st.subheader("📊 股票訊號表（依評分排序）")
