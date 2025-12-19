@@ -851,10 +851,19 @@ if scan_button and not st.session_state.is_scanning:
                             return ''
                         
                         # 使用apply逐行處理（正確的方法）
+                        # 注意：當使用subset時，row只包含subset中的列
                         def highlight_price_row(row):
-                            """逐行處理價格顏色"""
+                            """逐行處理價格顏色 - 返回Series匹配subset列"""
+                            # 獲取原始DataFrame中的行索引（通過styled_data的行索引）
+                            # row.index 應該只包含 subset 中的列（即'當前股價'）
                             row_idx = row.name if hasattr(row, 'name') else None
-                            if row_idx is not None and row_idx in display_df_for_style.index:
+                            
+                            # 如果無法獲取索引，返回空樣式
+                            if row_idx is None:
+                                return pd.Series([''], index=row.index)
+                            
+                            # 從原始DataFrame獲取數據
+                            if row_idx in display_df_for_style.index:
                                 prev_val = display_df_for_style.loc[row_idx, '前一日股價'] if '前一日股價' in display_df_for_style.columns else np.nan
                                 current_val = display_df_for_style.loc[row_idx, '_當前股價_原始'] if '_當前股價_原始' in display_df_for_style.columns else np.nan
                                 
@@ -863,10 +872,10 @@ if scan_button and not st.session_state.is_scanning:
                                     try:
                                         current_val = float(current_val)
                                     except (ValueError, TypeError):
-                                        return pd.Series([''] * len(row.index), index=row.index)
+                                        return pd.Series([''], index=row.index)
                                 
                                 if not isinstance(current_val, (int, float)) or pd.isna(current_val):
-                                    return pd.Series([''] * len(row.index), index=row.index)
+                                    return pd.Series([''], index=row.index)
                                 
                                 if pd.isna(prev_val) and 'MA5' in display_df_for_style.columns:
                                     prev_val = display_df_for_style.loc[row_idx, 'MA5']
@@ -875,22 +884,24 @@ if scan_button and not st.session_state.is_scanning:
                                     try:
                                         prev_val = float(prev_val)
                                     except (ValueError, TypeError):
-                                        return pd.Series([''] * len(row.index), index=row.index)
+                                        return pd.Series([''], index=row.index)
                                 
-                                # 創建返回Series，只對'當前股價'列應用樣式
-                                result = pd.Series([''] * len(row.index), index=row.index)
-                                if '當前股價' in result.index:
-                                    if (pd.notna(current_val) and pd.notna(prev_val) and 
-                                        isinstance(current_val, (int, float)) and 
-                                        isinstance(prev_val, (int, float)) and prev_val > 0):
-                                        if current_val > prev_val:
-                                            result['當前股價'] = 'color: #FF0000; font-weight: bold'
-                                        elif current_val < prev_val:
-                                            result['當前股價'] = 'color: #00AA00; font-weight: bold'
-                                return result
-                            return pd.Series([''] * len(row.index), index=row.index)
+                                # 判斷漲跌並返回樣式（Series的索引必須匹配subset的列）
+                                style_value = ''
+                                if (pd.notna(current_val) and pd.notna(prev_val) and 
+                                    isinstance(current_val, (int, float)) and 
+                                    isinstance(prev_val, (int, float)) and prev_val > 0):
+                                    if current_val > prev_val:
+                                        style_value = 'color: #FF0000; font-weight: bold'  # 漲：紅色
+                                    elif current_val < prev_val:
+                                        style_value = 'color: #00AA00; font-weight: bold'  # 跌：綠色
+                                
+                                # 返回Series，索引匹配subset（即'當前股價'）
+                                return pd.Series([style_value], index=row.index)
+                            
+                            return pd.Series([''], index=row.index)
                         
-                        final_styled_df = final_styled_df.apply(highlight_price_row, axis=1)
+                        final_styled_df = final_styled_df.apply(highlight_price_row, axis=1, subset=['當前股價'])
                 else:
                     final_styled_df = styled_df
                 
