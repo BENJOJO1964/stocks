@@ -704,12 +704,34 @@ if scan_button and not st.session_state.is_scanning:
                     highlight_price, axis=1, subset=['當前股價']
                 )
                 
-                # 在顯示前移除臨時列
-                if '_當前股價_原始' in display_df_for_style.columns:
-                    display_df_for_style = display_df_for_style.drop(columns=['_當前股價_原始'])
+                # styled_df已經包含了樣式，但我們需要在顯示前移除不需要的列
+                # 創建一個新的DataFrame，移除臨時列和前一日股價（不顯示給用戶）
+                final_display_df = display_df_for_style.copy()
+                columns_to_remove = []
+                if '_當前股價_原始' in final_display_df.columns:
+                    columns_to_remove.append('_當前股價_原始')
+                if '前一日股價' in final_display_df.columns:
+                    columns_to_remove.append('前一日股價')
+                
+                # 重新創建styled_df，但只包含需要的列
+                if columns_to_remove:
+                    # 創建一個不包含臨時列的DataFrame，但保留樣式
+                    final_df_for_display = final_display_df.drop(columns=columns_to_remove)
+                    # 重新應用樣式（只對剩餘的列）
+                    final_styled_df = final_df_for_display.style.applymap(
+                        highlight_score, subset=['策略評分'] if '策略評分' in final_df_for_display.columns else []
+                    ).applymap(
+                        highlight_signal, subset=['買入訊號'] if '買入訊號' in final_df_for_display.columns else []
+                    ).applymap(
+                        highlight_stop_loss, subset=['建議停損價(ATR)'] if '建議停損價(ATR)' in final_df_for_display.columns else []
+                    ).apply(
+                        highlight_price, axis=1, subset=['當前股價'] if '當前股價' in final_df_for_display.columns else []
+                    )
+                else:
+                    final_styled_df = styled_df
                 
                 st.dataframe(
-                    styled_df,
+                    final_styled_df,
                     use_container_width=True,
                     height=500
                 )
