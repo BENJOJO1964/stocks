@@ -128,7 +128,10 @@ class TaiwanStockScanner:
             - error_msg: 錯誤訊息（如果失敗）
         """
         original_stock_id = stock_id
+        # 確保end_date是今天（明確設置，不依賴時區）
         end_date = datetime.now()
+        # 為了確保獲取最新數據，end_date設為明天（這樣會包含今天的數據）
+        end_date_plus_one = end_date + timedelta(days=1)
         
         def try_fetch(ticker_symbol, period_str, start_dt, end_dt):
             """嘗試獲取數據的內部函數（優先使用ticker.history，更穩定）"""
@@ -136,39 +139,61 @@ class TaiwanStockScanner:
             try:
                 ticker = yf.Ticker(ticker_symbol)
                 
-                # 優先使用period方式（更可靠）
-                if period_str:
+                # 優先使用start/end方式（確保獲取到最新日期）
+                try:
+                    hist_data = ticker.history(
+                        start=start_dt.strftime('%Y-%m-%d'), 
+                        end=end_dt.strftime('%Y-%m-%d')
+                    )
+                except:
+                    pass
+                
+                # 如果start/end失敗，嘗試period方式（作為備選）
+                if (hist_data is None or hist_data.empty) and period_str:
                     try:
                         hist_data = ticker.history(period=period_str)
-                    except:
-                        pass
-                
-                # 如果period失敗或為空，使用start/end方式
-                if hist_data is None or hist_data.empty:
-                    try:
-                        hist_data = ticker.history(
-                            start=start_dt.strftime('%Y-%m-%d'), 
-                            end=end_dt.strftime('%Y-%m-%d')
-                        )
+                        # 如果使用period獲取，檢查是否包含最新數據
+                        # 如果不包含今天的數據，再次使用start/end嘗試獲取最新數據
+                        if hist_data is not None and not hist_data.empty:
+                            last_date = hist_data.index[-1] if isinstance(hist_data.index, pd.DatetimeIndex) else None
+                            if last_date:
+                                last_date_naive = last_date.tz_localize(None) if hasattr(last_date, 'tz') and last_date.tz else last_date
+                                today_naive = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                                # 如果最新數據不是今天，嘗試補充獲取
+                                if isinstance(last_date_naive, pd.Timestamp):
+                                    last_date_naive = last_date_naive.to_pydatetime()
+                                if last_date_naive < today_naive:
+                                    try:
+                                        # 嘗試獲取最近幾天的數據補充
+                                        recent_data = ticker.history(
+                                            start=(today_naive - timedelta(days=5)).strftime('%Y-%m-%d'),
+                                            end=end_dt.strftime('%Y-%m-%d')
+                                        )
+                                        if recent_data is not None and not recent_data.empty:
+                                            # 合併數據，去除重複日期
+                                            hist_data = pd.concat([hist_data, recent_data]).drop_duplicates().sort_index()
+                                    except:
+                                        pass
                     except:
                         pass
                 
                 # 如果ticker.history失敗，嘗試yf.download作為備選
                 if hist_data is None or hist_data.empty:
                     try:
-                        if period_str:
+                        # 優先使用start/end方式（確保獲取到最新日期）
+                        hist_data = yf.download(
+                            ticker_symbol,
+                            start=start_dt.strftime('%Y-%m-%d'), 
+                            end=end_dt.strftime('%Y-%m-%d'),
+                            progress=False,
+                            show_errors=False
+                        )
+                        
+                        # 如果start/end失敗，嘗試period方式
+                        if (hist_data is None or hist_data.empty) and period_str:
                             hist_data = yf.download(
                                 ticker_symbol, 
                                 period=period_str,
-                                progress=False,
-                                show_errors=False
-                            )
-                        
-                        if hist_data is None or hist_data.empty:
-                            hist_data = yf.download(
-                                ticker_symbol,
-                                start=start_dt.strftime('%Y-%m-%d'), 
-                                end=end_dt.strftime('%Y-%m-%d'),
                                 progress=False,
                                 show_errors=False
                             )
@@ -192,14 +217,14 @@ class TaiwanStockScanner:
         try:
             start_date = end_date - timedelta(days=years * 365)
             
-            # 嘗試獲取數據（直接使用ticker符號，yf.download需要字符串）
-            hist_data, error = try_fetch(stock_id, f"{years}y" if years <= 1 else None, start_date, end_date)
+            # 嘗試獲取數據（使用end_date_plus_one確保包含今天）
+            hist_data, error = try_fetch(stock_id, f"{years}y" if years <= 1 else None, start_date, end_date_plus_one)
             
             # 如果失敗且允許回退，嘗試1年數據
             if (hist_data is None or hist_data.empty) and allow_fallback and years > 1:
                 print(f"⚠️ {stock_id}: 無法獲取{years}年數據，回退到1年數據...")
                 start_date_1y = end_date - timedelta(days=365)
-                hist_data, error = try_fetch(stock_id, "1y", start_date_1y, end_date)
+                hist_data, error = try_fetch(stock_id, "1y", start_date_1y, end_date_plus_one)
                 actual_years = 1
             else:
                 actual_years = years
@@ -209,12 +234,12 @@ class TaiwanStockScanner:
                 alt_ticker_id = stock_id.replace('.TW', '.TWO')
                 print(f"ℹ️ {stock_id}: 嘗試.TWO後綴: {alt_ticker_id}")
                 try:
-                    hist_data, error = try_fetch(alt_ticker_id, f"{years}y" if years <= 1 else None, start_date, end_date)
+                    hist_data, error = try_fetch(alt_ticker_id, f"{years}y" if years <= 1 else None, start_date, end_date_plus_one)
                     
                     # 如果.TWO也失敗且允許回退，嘗試1年
                     if (hist_data is None or hist_data.empty) and allow_fallback and years > 1:
                         start_date_1y = end_date - timedelta(days=365)
-                        hist_data, error = try_fetch(alt_ticker_id, "1y", start_date_1y, end_date)
+                        hist_data, error = try_fetch(alt_ticker_id, "1y", start_date_1y, end_date_plus_one)
                         actual_years = 1
                     
                     if hist_data is not None and not hist_data.empty:

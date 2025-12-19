@@ -30,60 +30,63 @@ if 'use_custom_list' not in st.session_state:
     st.session_state.use_custom_list = False
 
 # 標題和數據日期（顯示在最上方）
+# 先檢查是否有掃描結果，提取最新日期
+latest_data_date = None
+if 'scan_results' in st.session_state and st.session_state.scan_results is not None:
+    results = st.session_state.scan_results
+    if '數據日期' in results.columns:
+        valid_dates = []
+        for date_val in results['數據日期']:
+            if pd.notna(date_val):
+                date_str = str(date_val).strip()
+                error_keywords = ['無數據', 'Data Error', 'Yahoo Finance未找到', '無法獲取', 
+                                 '流動性不足', '基本面不佳', '負債比率', '流動比率', '營收', 'EPS']
+                is_error = any(keyword in date_str for keyword in error_keywords)
+                has_colon = ':' in date_str
+                
+                if not is_error and not has_colon and len(date_str) >= 8:
+                    try:
+                        date_part = date_str[:10]
+                        datetime.strptime(date_part, '%Y-%m-%d')
+                        valid_dates.append(date_part)
+                    except:
+                        pass
+        
+        if valid_dates:
+            valid_dates_sorted = sorted(valid_dates, reverse=True)
+            latest_data_date = valid_dates_sorted[0]
+
+# 格式化日期顯示
+if latest_data_date:
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    try:
+        if latest_data_date == today_str:
+            date_display = f"✅ 數據日期：{latest_data_date}（最新）"
+        else:
+            date_obj = datetime.strptime(latest_data_date, '%Y-%m-%d')
+            today_obj = datetime.strptime(today_str, '%Y-%m-%d')
+            days_diff = (today_obj - date_obj).days
+            if days_diff == 1:
+                date_display = f"📅 數據日期：{latest_data_date}（昨天）"
+            elif days_diff > 1:
+                date_display = f"⚠️ 數據日期：{latest_data_date}（{days_diff}天前）"
+            else:
+                date_display = f"📅 數據日期：{latest_data_date}"
+    except:
+        date_display = f"📅 數據日期：{latest_data_date}"
+elif 'data_date_main' in st.session_state and st.session_state.data_date_main:
+    date_display = st.session_state.data_date_main
+else:
+    date_display = None
+
 col_main_title, col_main_date = st.columns([3, 2])
 with col_main_title:
     st.title("📊 台灣股市掃描器")
 with col_main_date:
-    # 初始化日期顯示為空（掃描後會更新）
-    if 'data_date_main' not in st.session_state:
-        st.session_state.data_date_main = ""
-    # 顯示日期（如果有的話）
-    if st.session_state.data_date_main:
-        st.markdown(f"<div style='margin-top: 1.5rem; font-size: 0.95rem; font-weight: 500;'>{st.session_state.data_date_main}</div>", unsafe_allow_html=True)
-    else:
-        # 如果有掃描結果，嘗試從結果中獲取日期
-        if 'scan_results' in st.session_state and st.session_state.scan_results is not None:
-            results = st.session_state.scan_results
-            if '數據日期' in results.columns:
-                valid_dates = []
-                for date_val in results['數據日期']:
-                    if pd.notna(date_val):
-                        date_str = str(date_val).strip()
-                        error_keywords = ['無數據', 'Data Error', 'Yahoo Finance未找到', '無法獲取', 
-                                         '流動性不足', '基本面不佳', '負債比率', '流動比率', '營收', 'EPS']
-                        is_error = any(keyword in date_str for keyword in error_keywords)
-                        has_colon = ':' in date_str
-                        
-                        if not is_error and not has_colon and len(date_str) >= 8:
-                            try:
-                                date_part = date_str[:10]
-                                datetime.strptime(date_part, '%Y-%m-%d')
-                                valid_dates.append(date_part)
-                            except:
-                                pass
-                
-                if valid_dates:
-                    valid_dates_sorted = sorted(valid_dates, reverse=True)
-                    latest_date = valid_dates_sorted[0]
-                    today_str = datetime.now().strftime('%Y-%m-%d')
-                    if latest_date == today_str:
-                        date_display = f"✅ 數據日期：{latest_date}（最新）"
-                    else:
-                        try:
-                            date_obj = datetime.strptime(latest_date, '%Y-%m-%d')
-                            today_obj = datetime.strptime(today_str, '%Y-%m-%d')
-                            days_diff = (today_obj - date_obj).days
-                            if days_diff == 1:
-                                date_display = f"📅 數據日期：{latest_date}（昨天）"
-                            elif days_diff > 1:
-                                date_display = f"⚠️ 數據日期：{latest_date}（{days_diff}天前）"
-                            else:
-                                date_display = f"📅 數據日期：{latest_date}"
-                        except:
-                            date_display = f"📅 數據日期：{latest_date}"
-                    
-                    st.markdown(f"<div style='margin-top: 1.5rem; font-size: 0.95rem; font-weight: 500;'>{date_display}</div>", unsafe_allow_html=True)
-                    st.session_state.data_date_main = date_display
+    # 顯示日期（如果有）
+    if date_display:
+        st.markdown(f"<div style='margin-top: 1.5rem; font-size: 0.95rem; font-weight: 500;'>{date_display}</div>", unsafe_allow_html=True)
+        st.session_state.data_date_main = date_display
 
 st.markdown("**專業評分系統 - 全市場掃描**")
 st.markdown("---")
@@ -574,8 +577,6 @@ if scan_button and not st.session_state.is_scanning:
                 # 更新session state中的日期（用於主標題顯示）
                 if data_date_display:
                     st.session_state.data_date_main = data_date_display
-                    # 觸發頁面重新渲染以顯示更新的日期
-                    # 注意：由於Streamlit的執行順序，這會在下次渲染時生效
                 
                 # 顯示表格標題
                 st.subheader("📊 股票訊號表（依評分排序）")
