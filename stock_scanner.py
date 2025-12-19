@@ -243,7 +243,9 @@ class TaiwanStockScanner:
         # 移動平均線（價格）
         df['MA5'] = df['Close'].rolling(window=5).mean()  # 5日均線
         df['MA20'] = df['Close'].rolling(window=self.ma_short).mean()  # 短期均線
+        df['MA50'] = df['Close'].rolling(window=50).mean()  # 中期均線（長期趨勢確認）
         df['MA60'] = df['Close'].rolling(window=self.ma_long).mean()  # 長期均線
+        df['MA200'] = df['Close'].rolling(window=200).mean()  # 超長期均線（長期趨勢保護）
         
         # 成交量均線
         df['MA5_Vol'] = df['Volume'].rolling(window=5).mean()
@@ -599,6 +601,17 @@ class TaiwanStockScanner:
         has_nan = df[critical_cols].isnull().any(axis=1)
         df['Data_Error'] = has_nan
         
+        # ===== 長期趨勢保護（MA50/MA200）- 專業級確認 =====
+        # 檢查長期趨勢：價格 > MA50 > MA200（確認長期上升趨勢）
+        long_term_trend = (
+            (df['Close'] > df['MA50']) & 
+            (df['MA50'] > df['MA200']) &
+            df['Close'].notna() & 
+            df['MA50'].notna() & 
+            df['MA200'].notna()
+        )
+        df['長期趨勢確認'] = long_term_trend  # 額外的長期趨勢保護
+        
         # ===== 新增規則：觀察條件和進場觸發條件 =====
         # 觀察條件：自60日高點回檔 ≥ 20%（不是進場條件，只是觀察）
         pullback_20pct = df['Pullback_From_60d_High'] >= 20.0
@@ -635,6 +648,10 @@ class TaiwanStockScanner:
             df['MA60'].notna()
         )
         
+        # 長期趨勢確認（額外加分項）：如果滿足 MA50/MA200 長期趨勢，額外加分
+        # 注意：這是額外的確認，不作為必要條件（因為台股波段交易可能不需要嚴格滿足MA200）
+        # 但如果滿足，代表長期趨勢更強，可以獲得更高評分
+        
         # 合併原有規則和新規則：必須同時滿足原有趨勢基礎 AND 新進場觸發條件
         # 但為了兼容，我們將新規則作為額外的確認條件
         enhanced_entry_condition = trend_foundation & new_entry_trigger
@@ -648,7 +665,8 @@ class TaiwanStockScanner:
         price_near_ma20 = price_near_ma20 & df['Close'].notna() & df['MA20'].notna()
         
         # 趨勢評分（40%）：必須有趨勢基礎才能得分
-        trend_score = np.where(
+        # 如果同時滿足長期趨勢（MA50/MA200），額外加分
+        base_trend_score = np.where(
             trend_foundation,
             np.where(
                 golden_cross & price_near_ma20, 100.0,  # 完美進場點
@@ -657,7 +675,13 @@ class TaiwanStockScanner:
             ),
             0.0  # 沒有趨勢基礎，不得分
         )
+        
+        # 長期趨勢確認加分：如果滿足 MA50 > MA200，額外加5分（最高100分）
+        long_term_bonus = np.where(long_term_trend & trend_foundation, 5.0, 0.0)
+        trend_score = np.minimum(base_trend_score + long_term_bonus, 100.0)
+        
         df['Trend_Score'] = trend_score * self.trend_weight
+        df['長期趨勢加分'] = long_term_bonus  # 記錄長期趨勢加分
         
         # 3. 動量評分（30%）
         momentum_score = np.where(
@@ -908,7 +932,8 @@ class TaiwanStockScanner:
                 # 獲取數據（使用1年數據，100%真實數據）
                 # 注意：系統會自動處理上櫃股票（如果.TW找不到，會自動嘗試.TWO）
                 # 波段交易需要至少60個交易日（用於計算MA60和基本指標）
-                df = self.fetch_stock_data(stock_id, years=1)
+                # 使用2年數據以準確計算MA200（需要至少200個交易日）
+                df = self.fetch_stock_data(stock_id, years=2)
                 
                 # 檢查流動性
                 if df is not None and len(df) >= 20:
@@ -962,7 +987,7 @@ class TaiwanStockScanner:
                     # 如果.TW找不到，自動嘗試.TWO（針對上櫃股票）
                     if stock_id.endswith('.TW') and len(stock_id) == 8:
                         alt_stock_id = stock_id.replace('.TW', '.TWO')
-                        df_alt = self.fetch_stock_data(alt_stock_id, years=1)
+                        df_alt = self.fetch_stock_data(alt_stock_id, years=2)
                         if df_alt is not None and len(df_alt) >= 60:
                             # .TWO成功獲取數據，使用.TWO的ticker
                             df = df_alt
