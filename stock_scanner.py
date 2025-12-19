@@ -1154,6 +1154,11 @@ class TaiwanStockScanner:
                 # 當前價格 = 最新的Close價格（確保是最新數據）
                 current_price = latest['Close']
                 
+                # 獲取前一日價格（用於判斷漲跌顏色）
+                prev_price = np.nan
+                if len(scored_df) > 1:
+                    prev_price = scored_df.iloc[-2]['Close']  # 前一個交易日的收盤價
+                
                 # 計算建議停利價（買入價 + 2*ATR）
                 take_profit_price = np.nan
                 if pd.notna(current_price) and pd.notna(latest['ATR']) and latest['ATR'] > 0:

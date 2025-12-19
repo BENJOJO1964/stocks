@@ -497,7 +497,7 @@ if scan_button and not st.session_state.is_scanning:
                 # 準備顯示表格（波段交易專用）
                 # 不再在表格中顯示數據日期（已移至標題旁）
                 display_columns = [
-                    '族群', '股票代碼', '股票名稱', '當前股價',
+                    '族群', '股票代碼', '股票名稱', '當前股價', '前一日股價',
                     'MA5', 'MA20', 'MA50', 'MA60', 'MA200',
                     '策略評分', '買入訊號', '波段狀態', '建議持有天數',
                     '建議停損價(ATR)', '移動停損價', '建議停利價'
@@ -585,8 +585,10 @@ if scan_button and not st.session_state.is_scanning:
                     other_cols = [c for c in display_df.columns if c != '族群']
                     display_df = display_df[['族群'] + other_cols]
                 
-                # 格式化數值
+                # 格式化數值（保留原始數值用於顏色判斷）
+                # 先創建一個副本保存原始數值
                 if '當前股價' in display_df.columns:
+                    display_df['_當前股價_原始'] = display_df['當前股價'].copy()  # 保存原始數值
                     display_df['當前股價'] = display_df['當前股價'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
                 
                 # 格式化均線數值（讓用戶看到計算結果）
@@ -651,6 +653,23 @@ if scan_button and not st.session_state.is_scanning:
                         return 'background-color: #FFB6C1; font-weight: bold; color: #8B0000'  # 紅色
                     return ''
                 
+                def highlight_price(row):
+                    """根據當前股價和前一日股價判斷漲跌，漲顯示紅色，跌顯示綠色"""
+                    current_val = row.get('_當前股價_原始')  # 原始數值
+                    prev_val = row.get('前一日股價', np.nan)
+                    
+                    # 如果沒有前一日價格，使用MA5作為參考
+                    if pd.isna(prev_val) and 'MA5' in row.index:
+                        prev_val = row.get('MA5', np.nan)
+                    
+                    # 如果有有效數據且當前價格和前一日價格都有效
+                    if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
+                        if current_val > prev_val:
+                            return 'color: #FF0000; font-weight: bold'  # 漲：紅色
+                        elif current_val < prev_val:
+                            return 'color: #00AA00; font-weight: bold'  # 跌：綠色
+                    return ''  # 沒有數據或相等時不顯示顏色
+                
                 # 確保在應用樣式前，DataFrame的索引是唯一的（重置索引）
                 display_df = display_df.reset_index(drop=True)
                 
@@ -668,13 +687,26 @@ if scan_button and not st.session_state.is_scanning:
                             new_columns.append(col)
                     display_df.columns = new_columns
                 
-                styled_df = display_df.style.applymap(
+                # 準備樣式：先移除用於判斷的臨時列
+                display_df_for_style = display_df.copy()
+                # 移除臨時的原始數值列（如果存在）
+                if '_當前股價_原始' in display_df_for_style.columns:
+                    # 但我們需要保留它用於apply函數
+                    pass
+                
+                styled_df = display_df_for_style.style.applymap(
                     highlight_score, subset=['策略評分']
                 ).applymap(
                     highlight_signal, subset=['買入訊號']
                 ).applymap(
                     highlight_stop_loss, subset=['建議停損價(ATR)']
+                ).apply(
+                    highlight_price, axis=1, subset=['當前股價']
                 )
+                
+                # 在顯示前移除臨時列
+                if '_當前股價_原始' in display_df_for_style.columns:
+                    display_df_for_style = display_df_for_style.drop(columns=['_當前股價_原始'])
                 
                 st.dataframe(
                     styled_df,
