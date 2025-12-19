@@ -135,16 +135,15 @@ class TaiwanStockScanner:
             hist_data = None
             try:
                 # 優先使用period方式
+                # 注意：yfinance的history()方法不支持auto_adjust和threads參數，這些只在yf.download()中使用
                 if period_str:
-                    hist_data = ticker_obj.history(period=period_str, auto_adjust=True, threads=True)
+                    hist_data = ticker_obj.history(period=period_str)
                 
                 # 如果period失敗或為空，使用start/end方式
                 if hist_data is None or hist_data.empty:
                     hist_data = ticker_obj.history(
                         start=start_dt.strftime('%Y-%m-%d'), 
-                        end=end_dt.strftime('%Y-%m-%d'),
-                        auto_adjust=True,
-                        threads=True
+                        end=end_dt.strftime('%Y-%m-%d')
                     )
             except Exception as e:
                 return None, str(e)
