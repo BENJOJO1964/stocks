@@ -249,3 +249,4 @@ def get_twse_institutional_data(stock_code, date=None):
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+

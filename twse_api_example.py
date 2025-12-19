@@ -174,3 +174,4 @@ class TaiwanStockScanner:
         return self.get_yfinance_institutional_data(stock_id)
 """
 
+

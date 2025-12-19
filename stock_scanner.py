@@ -102,8 +102,10 @@ class TaiwanStockScanner:
         self.enable_fundamental_filter = enable_fundamental_filter
         self.enable_liquidity_check = enable_liquidity_check
         
-        # 獲取TAIEX作為基準（用於相對強度計算）
-        self.benchmark_ticker = '^TWII'  # 台灣加權指數
+        # 基準指數（根據股票自動選擇）
+        # 台股使用^TWII（台灣加權指數），美股使用^GSPC（S&P 500）
+        self.benchmark_ticker_tw = '^TWII'  # 台灣加權指數
+        self.benchmark_ticker_us = '^GSPC'  # 美股標普500
     
     def fetch_stock_data(self, stock_id: str, years: int = 1) -> pd.DataFrame:
         """
@@ -215,10 +217,31 @@ class TaiwanStockScanner:
             print(f"獲取 {stock_id} 數據失敗: {str(e)}")
             return None
     
-    def fetch_benchmark_data(self, years: int = 1) -> Optional[pd.DataFrame]:
-        """獲取TAIEX基準數據"""
+    def fetch_benchmark_data(self, years: int = 1, stock_id: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """
+        獲取基準數據（根據股票代碼自動選擇）
+        
+        Parameters:
+        -----------
+        years : int
+            獲取多少年的數據
+        stock_id : str, optional
+            股票代碼，用於判斷使用哪個基準指數
+            - 台股（.TW或.TWO）：使用^TWII
+            - 美股（純字母代碼）：使用^GSPC
+        """
         try:
-            ticker = yf.Ticker(self.benchmark_ticker)
+            # 根據股票代碼選擇基準指數
+            if stock_id:
+                if '.TW' in stock_id or '.TWO' in stock_id:
+                    benchmark = self.benchmark_ticker_tw  # 台股
+                else:
+                    benchmark = self.benchmark_ticker_us  # 美股（純字母代碼如NVDA、TSLA）
+            else:
+                # 默認使用台股基準
+                benchmark = self.benchmark_ticker_tw
+            
+            ticker = yf.Ticker(benchmark)
             end_date = datetime.now()
             start_date = end_date - timedelta(days=years * 365)
             
@@ -909,13 +932,12 @@ class TaiwanStockScanner:
         pd.DataFrame
             符合條件的股票結果（按分數排序）
         """
-        # 獲取基準數據
-        benchmark_df = self.fetch_benchmark_data()
-        
         results = []
         total = len(stock_list)
         
         for i, stock_id in enumerate(stock_list):
+            # 為每支股票獲取對應的基準數據（台股用^TWII，美股用^GSPC）
+            benchmark_df = self.fetch_benchmark_data(years=2, stock_id=stock_id)
             try:
                 if progress_callback:
                     progress_callback(i + 1, total, stock_id)
@@ -1191,7 +1213,9 @@ class TaiwanStockScanner:
                     '建議持有天數': holding_days,
                     'MA5': latest.get('MA5', np.nan),
                     'MA20': latest['MA20'],
+                    'MA50': latest.get('MA50', np.nan),  # 中期均線（長期趨勢確認）
                     'MA60': latest['MA60'],
+                    'MA200': latest.get('MA200', np.nan),  # 超長期均線（長期趨勢保護）
                     # 保留其他欄位用於內部處理
                     'Date': latest.name,
                     'Volume': latest['Volume'],

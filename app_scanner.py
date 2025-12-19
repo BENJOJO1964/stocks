@@ -55,8 +55,8 @@ with st.sidebar:
             "股票代碼輸入",
             value="",
             height=150,
-            help="範例：\n2330.TW\n2317.TW\n2382.TW\n\n或：2330.TW, 2317.TW, 2382.TW\n\n注意：上市股票使用.TW，上櫃股票使用.TWO",
-            placeholder="每行輸入一個股票代碼，例如：\n2330.TW\n2317.TW\n2382.TW"
+            help="範例（台股）：\n2330.TW\n2317.TW\n4979.TWO\n\n範例（美股）：\nNVDA\nTSLA\nAAPL\n\n或使用逗號分隔：2330.TW, NVDA, TSLA\n\n注意：\n- 台股：上市使用.TW，上櫃使用.TWO\n- 美股：直接輸入代碼（如NVDA）",
+            placeholder="每行輸入一個股票代碼，例如：\n2330.TW（台股）\nNVDA（美股）\nTSLA（美股）"
         )
         
         # 解析用戶輸入的股票代碼
@@ -67,13 +67,18 @@ with st.sidebar:
             for line in lines:
                 ticker = line.strip().upper()
                 if ticker:
-                    # 驗證格式：必須包含.TW或.TWO
+                    # 台股：包含.TW或.TWO
                     if '.TW' in ticker or '.TWO' in ticker:
                         custom_stock_list.append(ticker)
+                    # 台股：4位數字，自動添加.TW
                     elif ticker.isdigit() and len(ticker) == 4:
-                        # 如果只輸入4位數字，先嘗試.TW（系統會自動處理上櫃股票）
-                        # 如果.TW找不到，fetch_stock_data會自動嘗試.TWO
                         custom_stock_list.append(f"{ticker}.TW")
+                    # 美股：純字母代碼（如NVDA、TSLA、AAPL等）
+                    elif ticker.isalpha() and len(ticker) >= 1 and len(ticker) <= 5:
+                        custom_stock_list.append(ticker)
+                    else:
+                        # 無法識別的格式，跳過或提示
+                        st.warning(f"⚠️ 無法識別的股票代碼格式：{ticker}（已跳過）")
             
             stock_list = custom_stock_list
             if stock_list:
@@ -493,7 +498,7 @@ if scan_button and not st.session_state.is_scanning:
                 # 不再在表格中顯示數據日期（已移至標題旁）
                 display_columns = [
                     '族群', '股票代碼', '股票名稱', '當前股價',
-                    'MA5', 'MA20', 'MA60',
+                    'MA5', 'MA20', 'MA50', 'MA60', 'MA200',
                     '策略評分', '買入訊號', '波段狀態', '建議持有天數',
                     '建議停損價(ATR)', '移動停損價', '建議停利價'
                 ]
@@ -585,9 +590,9 @@ if scan_button and not st.session_state.is_scanning:
                     display_df['當前股價'] = display_df['當前股價'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
                 
                 # 格式化均線數值（讓用戶看到計算結果）
-                for ma_col in ['MA5', 'MA20', 'MA60']:
+                for ma_col in ['MA5', 'MA20', 'MA50', 'MA60', 'MA200']:
                     if ma_col in display_df.columns:
-                        display_df[ma_col] = display_df[ma_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "Data Error")
+                        display_df[ma_col] = display_df[ma_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-")
                 
                 if '策略評分' in display_df.columns:
                     display_df['策略評分'] = display_df['策略評分'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "0.0")
@@ -802,7 +807,7 @@ elif st.session_state.scan_results is not None and not st.session_state.is_scann
     display_cols = []
     
     # 主掃描流程的列名（優先）
-    main_cols = ['族群', '股票代碼', '股票名稱', '當前股價', 'MA5', 'MA20', 'MA60', 
+    main_cols = ['族群', '股票代碼', '股票名稱', '當前股價', 'MA5', 'MA20', 'MA50', 'MA60', 'MA200', 
                  '策略評分', '買入訊號', '波段狀態', '建議持有天數',
                  '建議停損價(ATR)', '移動停損價', '建議停利價']
     
