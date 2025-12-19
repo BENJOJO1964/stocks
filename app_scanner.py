@@ -826,16 +826,15 @@ if scan_button and not st.session_state.is_scanning:
                                     except:
                                         return ''
                                 
-                                # 進行數值比較
-                                if pd.notna(current_val) and pd.notna(prev_val):
-                                    try:
-                                        if isinstance(prev_val, (int, float)) and prev_val > 0:
-                                            if current_val > prev_val:
-                                                return 'color: #FF0000; font-weight: bold'
-                                            elif current_val < prev_val:
-                                                return 'color: #00AA00; font-weight: bold'
-                                    except (TypeError, ValueError):
-                                        return ''
+                                # 進行數值比較（確保兩個值都是數字類型）
+                                if (pd.notna(current_val) and pd.notna(prev_val) and
+                                    isinstance(current_val, (int, float)) and 
+                                    isinstance(prev_val, (int, float)) and 
+                                    prev_val > 0):
+                                    if current_val > prev_val:
+                                        return 'color: #FF0000; font-weight: bold'
+                                    elif current_val < prev_val:
+                                        return 'color: #00AA00; font-weight: bold'
                             return ''
                         
                         final_styled_df = final_styled_df.apply(
