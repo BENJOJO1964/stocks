@@ -653,22 +653,65 @@ if scan_button and not st.session_state.is_scanning:
                         return 'background-color: #FFB6C1; font-weight: bold; color: #8B0000'  # 紅色
                     return ''
                 
-                def highlight_price(row):
-                    """根據當前股價和前一日股價判斷漲跌，漲顯示紅色，跌顯示綠色"""
-                    current_val = row.get('_當前股價_原始')  # 原始數值
-                    prev_val = row.get('前一日股價', np.nan)
-                    
-                    # 如果沒有前一日價格，使用MA5作為參考
-                    if pd.isna(prev_val) and 'MA5' in row.index:
-                        prev_val = row.get('MA5', np.nan)
-                    
-                    # 如果有有效數據且當前價格和前一日價格都有效
-                    if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
-                        if current_val > prev_val:
-                            return 'color: #FF0000; font-weight: bold'  # 漲：紅色
-                        elif current_val < prev_val:
-                            return 'color: #00AA00; font-weight: bold'  # 跌：綠色
-                    return ''  # 沒有數據或相等時不顯示顏色
+                # 創建highlight_price函數（使用閉包訪問完整DataFrame）
+                def create_highlight_price(df_with_data):
+                    def highlight_price(row):
+                        """根據當前股價和前一日股價判斷漲跌，漲顯示紅色，跌顯示綠色"""
+                        # 獲取當前行在DataFrame中的索引
+                        try:
+                            row_idx = row.name if hasattr(row, 'name') else None
+                            if row_idx is not None and row_idx in df_with_data.index:
+                                # 從原始DataFrame獲取前一日股價
+                                prev_val = df_with_data.loc[row_idx, '前一日股價'] if '前一日股價' in df_with_data.columns else np.nan
+                                current_val = df_with_data.loc[row_idx, '_當前股價_原始'] if '_當前股價_原始' in df_with_data.columns else row.get('當前股價', np.nan)
+                                
+                                # 嘗試從格式化後的字符串中解析當前價格
+                                if isinstance(current_val, str):
+                                    try:
+                                        # 移除格式化的數字，如 "239.00"
+                                        current_val = float(current_val)
+                                    except:
+                                        # 如果無法解析，嘗試從原始數據獲取
+                                        if '_當前股價_原始' in df_with_data.columns:
+                                            current_val = df_with_data.loc[row_idx, '_當前股價_原始']
+                                        else:
+                                            return ''
+                                
+                                # 如果沒有前一日價格，使用MA5作為參考
+                                if pd.isna(prev_val) and 'MA5' in df_with_data.columns:
+                                    prev_val = df_with_data.loc[row_idx, 'MA5']
+                                
+                                # 如果有有效數據且當前價格和前一日價格都有效
+                                if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
+                                    if current_val > prev_val:
+                                        return 'color: #FF0000; font-weight: bold'  # 漲：紅色
+                                    elif current_val < prev_val:
+                                        return 'color: #00AA00; font-weight: bold'  # 跌：綠色
+                            else:
+                                # 如果無法獲取索引，嘗試直接從row獲取
+                                current_val = row.get('_當前股價_原始', row.get('當前股價', np.nan))
+                                prev_val = row.get('前一日股價', np.nan)
+                                
+                                if isinstance(current_val, str):
+                                    try:
+                                        current_val = float(current_val)
+                                    except:
+                                        return ''
+                                
+                                if pd.isna(prev_val) and 'MA5' in row.index:
+                                    prev_val = row.get('MA5', np.nan)
+                                
+                                if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
+                                    if current_val > prev_val:
+                                        return 'color: #FF0000; font-weight: bold'
+                                    elif current_val < prev_val:
+                                        return 'color: #00AA00; font-weight: bold'
+                        except Exception as e:
+                            pass
+                        return ''
+                    return highlight_price
+                
+                highlight_price = create_highlight_price(display_df)
                 
                 # 確保在應用樣式前，DataFrame的索引是唯一的（重置索引）
                 display_df = display_df.reset_index(drop=True)
@@ -687,46 +730,71 @@ if scan_button and not st.session_state.is_scanning:
                             new_columns.append(col)
                     display_df.columns = new_columns
                 
-                # 準備樣式：先移除用於判斷的臨時列
+                # 準備樣式應用（保留所有輔助列用於顏色判斷）
                 display_df_for_style = display_df.copy()
-                # 移除臨時的原始數值列（如果存在）
-                if '_當前股價_原始' in display_df_for_style.columns:
-                    # 但我們需要保留它用於apply函數
-                    pass
                 
+                # 應用所有樣式（包括需要輔助列的highlight_price）
                 styled_df = display_df_for_style.style.applymap(
-                    highlight_score, subset=['策略評分']
+                    highlight_score, subset=['策略評分'] if '策略評分' in display_df_for_style.columns else []
                 ).applymap(
-                    highlight_signal, subset=['買入訊號']
+                    highlight_signal, subset=['買入訊號'] if '買入訊號' in display_df_for_style.columns else []
                 ).applymap(
-                    highlight_stop_loss, subset=['建議停損價(ATR)']
+                    highlight_stop_loss, subset=['建議停損價(ATR)'] if '建議停損價(ATR)' in display_df_for_style.columns else []
                 ).apply(
-                    highlight_price, axis=1, subset=['當前股價']
+                    highlight_price, axis=1, subset=['當前股價'] if '當前股價' in display_df_for_style.columns else []
                 )
                 
-                # styled_df已經包含了樣式，但我們需要在顯示前移除不需要的列
-                # 創建一個新的DataFrame，移除臨時列和前一日股價（不顯示給用戶）
-                final_display_df = display_df_for_style.copy()
+                # 在顯示前移除臨時列和前一日股價（不顯示給用戶）
                 columns_to_remove = []
-                if '_當前股價_原始' in final_display_df.columns:
+                if '_當前股價_原始' in display_df_for_style.columns:
                     columns_to_remove.append('_當前股價_原始')
-                if '前一日股價' in final_display_df.columns:
+                if '前一日股價' in display_df_for_style.columns:
                     columns_to_remove.append('前一日股價')
                 
-                # 重新創建styled_df，但只包含需要的列
+                # 從樣式的底層數據中移除不需要的列
                 if columns_to_remove:
-                    # 創建一個不包含臨時列的DataFrame，但保留樣式
-                    final_df_for_display = final_display_df.drop(columns=columns_to_remove)
-                    # 重新應用樣式（只對剩餘的列）
-                    final_styled_df = final_df_for_display.style.applymap(
-                        highlight_score, subset=['策略評分'] if '策略評分' in final_df_for_display.columns else []
+                    # 獲取樣式的底層數據，移除列，然後重新應用樣式
+                    styled_data = styled_df.data.drop(columns=columns_to_remove)
+                    # 重新應用樣式（但不包括highlight_price，因為它需要輔助列）
+                    # 但是highlight_price已經應用到當前股價列了，樣式會保留
+                    final_styled_df = styled_data.style.applymap(
+                        highlight_score, subset=['策略評分'] if '策略評分' in styled_data.columns else []
                     ).applymap(
-                        highlight_signal, subset=['買入訊號'] if '買入訊號' in final_df_for_display.columns else []
+                        highlight_signal, subset=['買入訊號'] if '買入訊號' in styled_data.columns else []
                     ).applymap(
-                        highlight_stop_loss, subset=['建議停損價(ATR)'] if '建議停損價(ATR)' in final_df_for_display.columns else []
-                    ).apply(
-                        highlight_price, axis=1, subset=['當前股價'] if '當前股價' in final_df_for_display.columns else []
+                        highlight_stop_loss, subset=['建議停損價(ATR)'] if '建議停損價(ATR)' in styled_data.columns else []
                     )
+                    
+                    # highlight_price的樣式已經應用到原始DataFrame，現在需要手動轉移
+                    # 獲取原始DataFrame中當前股價列的樣式映射
+                    if '當前股價' in display_df_for_style.columns:
+                        # 創建一個新的highlight函數，從原始數據中讀取
+                        def highlight_price_final(row):
+                            # 嘗試從原始DataFrame獲取數據（通過索引匹配）
+                            row_idx = row.name if hasattr(row, 'name') else None
+                            if row_idx is not None and row_idx in display_df_for_style.index:
+                                prev_val = display_df_for_style.loc[row_idx, '前一日股價'] if '前一日股價' in display_df_for_style.columns else np.nan
+                                current_val = display_df_for_style.loc[row_idx, '_當前股價_原始'] if '_當前股價_原始' in display_df_for_style.columns else display_df_for_style.loc[row_idx, '當前股價']
+                                
+                                if isinstance(current_val, str):
+                                    try:
+                                        current_val = float(current_val)
+                                    except:
+                                        return ''
+                                
+                                if pd.isna(prev_val) and 'MA5' in display_df_for_style.columns:
+                                    prev_val = display_df_for_style.loc[row_idx, 'MA5']
+                                
+                                if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
+                                    if current_val > prev_val:
+                                        return 'color: #FF0000; font-weight: bold'
+                                    elif current_val < prev_val:
+                                        return 'color: #00AA00; font-weight: bold'
+                            return ''
+                        
+                        final_styled_df = final_styled_df.apply(
+                            highlight_price_final, axis=1, subset=['當前股價'] if '當前股價' in styled_data.columns else []
+                        )
                 else:
                     final_styled_df = styled_df
                 
