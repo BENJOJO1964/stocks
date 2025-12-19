@@ -39,14 +39,24 @@ if 'scan_results' in st.session_state and st.session_state.scan_results is not N
         for date_val in results['數據日期']:
             if pd.notna(date_val):
                 date_str = str(date_val).strip()
+                # 如果包含警告信息（如基本面警告），提取日期部分
+                if '⚠️' in date_str or '(' in date_str:
+                    # 提取日期部分（在⚠️或(之前的部分）
+                    if '⚠️' in date_str:
+                        date_str = date_str.split('⚠️')[0].strip()
+                    elif '(' in date_str:
+                        date_str = date_str.split('(')[0].strip()
+                
                 error_keywords = ['無數據', 'Data Error', 'Yahoo Finance未找到', '無法獲取', 
                                  '流動性不足', '基本面不佳', '負債比率', '流動比率', '營收', 'EPS']
                 is_error = any(keyword in date_str for keyword in error_keywords)
-                has_colon = ':' in date_str
+                has_colon = ':' in date_str and date_str.count(':') > 1  # 只排除包含多個冒號的（如時間格式）
                 
                 if not is_error and not has_colon and len(date_str) >= 8:
                     try:
+                        # 嘗試提取日期部分（前10個字符）
                         date_part = date_str[:10]
+                        # 驗證是否為有效的日期格式
                         datetime.strptime(date_part, '%Y-%m-%d')
                         valid_dates.append(date_part)
                     except:
