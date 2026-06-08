@@ -13,7 +13,8 @@
 3. 自動用 yfinance 下載每檔候選股票最近至少 90 個交易日的真實股價資料
 4. 找出「距離 60 日高點回落 >= 20%」的股票
 5. 對符合回落條件的股票做品質檢查
-6. 輸出 `drawdown_quality_report.csv`，並在終端機顯示前 10 筆表格
+6. 輸出 `drawdown_quality_report.csv` 與 `drawdown_quality_report.html`
+7. 自動開啟 HTML 報告頁面，避免在終端機顯示混亂表格
 
 ### 執行方式
 
@@ -25,7 +26,10 @@ python scan_drawdown_quality.py
 
 ```text
 drawdown_quality_report.csv
+drawdown_quality_report.html
 ```
+
+執行完成後會自動開啟 `drawdown_quality_report.html` 報告頁面。
 
 測試時可先掃描前 N 檔：
 
@@ -37,6 +41,12 @@ python scan_drawdown_quality.py --limit 50
 
 ```bash
 python scan_drawdown_quality.py --include-insufficient
+```
+
+若只想產生頁面但不要自動開啟瀏覽器：
+
+```bash
+python scan_drawdown_quality.py --no-open
 ```
 
 ### 新報告欄位

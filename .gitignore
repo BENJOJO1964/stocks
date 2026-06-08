@@ -49,8 +49,8 @@ Thumbs.db
 *.csv
 *.xlsx
 *.db
+drawdown_quality_report.html
 
 # 備份文件
 *.bak
 *.backup
-

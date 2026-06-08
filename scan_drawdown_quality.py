@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import time
+import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 import pandas as pd
 import requests
@@ -24,6 +26,7 @@ from data_fetcher import DataFetcher
 TWSE_LISTED_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
 TPEX_OTC_URL = "http://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
 DEFAULT_OUTPUT_FILE = "drawdown_quality_report.csv"
+DEFAULT_HTML_FILE = "drawdown_quality_report.html"
 
 
 TPEX_INDUSTRY_NAMES = {
@@ -431,9 +434,159 @@ def scan_drawdown_quality(
     return report
 
 
+def rating_counts(report: pd.DataFrame) -> Dict[str, int]:
+    if report.empty or "最終評級" not in report.columns:
+        return {}
+    return {str(key): int(value) for key, value in report["最終評級"].value_counts().items()}
+
+
+def build_html_report(report: pd.DataFrame, html_file: str, csv_file: str) -> Path:
+    html_path = Path(html_file).resolve()
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    counts = rating_counts(report)
+    total_count = len(report)
+    category_count = 0
+    if not report.empty and "主流產業類別" in report.columns:
+        categories = set()
+        for value in report["主流產業類別"].dropna():
+            categories.update(str(value).split("、"))
+        category_count = len(categories)
+
+    if report.empty:
+        table_html = "<div class='empty'>沒有符合條件的股票。</div>"
+    else:
+        table_html = report.to_html(index=False, escape=True, classes="report-table")
+
+    html = f"""<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>檢視回落 -20% 品質報告</title>
+  <style>
+    :root {{
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d7dde5;
+      --text: #18202a;
+      --muted: #657080;
+      --accent: #0f766e;
+      --danger: #b42318;
+      --warning: #a15c07;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    header {{
+      padding: 24px 28px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }}
+    h1 {{
+      margin: 0 0 10px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }}
+    .meta {{
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    main {{ padding: 20px 28px 32px; }}
+    .cards {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }}
+    .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }}
+    .label {{ color: var(--muted); font-size: 13px; margin-bottom: 6px; }}
+    .value {{ font-size: 24px; font-weight: 700; }}
+    .table-wrap {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: auto;
+      max-height: calc(100vh - 210px);
+    }}
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 1280px;
+      font-size: 14px;
+    }}
+    th, td {{
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      white-space: nowrap;
+    }}
+    th {{
+      background: #eef2f6;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      font-weight: 700;
+    }}
+    tr:nth-child(even) td {{ background: #fafbfc; }}
+    td:nth-child(5), td:nth-child(8) {{ color: var(--danger); font-weight: 650; }}
+    .empty {{
+      padding: 36px;
+      color: var(--muted);
+      text-align: center;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>檢視回落 -20% 品質報告</h1>
+    <div class="meta">
+      <span>產生時間：{generated_at}</span>
+      <span>CSV：{csv_file}</span>
+      <span>人工主流產業清單篩選</span>
+    </div>
+  </header>
+  <main>
+    <section class="cards">
+      <div class="card"><div class="label">符合條件</div><div class="value">{total_count}</div></div>
+      <div class="card"><div class="label">涵蓋主流類別</div><div class="value">{category_count}</div></div>
+      <div class="card"><div class="label">A級</div><div class="value">{counts.get("A級：品質較好，可買", 0)}</div></div>
+      <div class="card"><div class="label">B級</div><div class="value">{counts.get("B級：只觀察", 0)}</div></div>
+      <div class="card"><div class="label">C級</div><div class="value">{counts.get("C級：不買", 0)}</div></div>
+    </section>
+    <section class="table-wrap">
+      {table_html}
+    </section>
+  </main>
+</body>
+</html>
+"""
+    html_path.write_text(html, encoding="utf-8")
+    return html_path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="檢視回落 -20% 品質自動選股系統")
     parser.add_argument("--output", default=DEFAULT_OUTPUT_FILE, help="CSV 輸出檔名")
+    parser.add_argument("--html-output", default=DEFAULT_HTML_FILE, help="HTML 頁面輸出檔名")
+    parser.add_argument("--no-open", action="store_true", help="產生 HTML 但不要自動開啟瀏覽器")
     parser.add_argument("--limit", type=int, default=None, help="只掃描前 N 檔，用於測試")
     parser.add_argument(
         "--include-insufficient",
@@ -457,12 +610,11 @@ def main() -> None:
         include_insufficient=args.include_insufficient,
         sleep_seconds=args.sleep,
     )
+    html_path = build_html_report(report, args.html_output, args.output)
+    print(f"已輸出頁面：{html_path}")
 
-    print("\n【範例輸出前10筆】")
-    if report.empty:
-        print("沒有符合條件的股票。")
-    else:
-        print(report.head(10).to_string(index=False))
+    if not args.no_open:
+        webbrowser.open(html_path.as_uri())
 
 
 if __name__ == "__main__":
