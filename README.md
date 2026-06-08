@@ -4,15 +4,16 @@
 
 ## 新功能：檢視回落 -20% 品質自動選股系統
 
-`scan_drawdown_quality.py` 會自動掃描台股上市櫃市場，不需要使用者手動輸入股票代號。
+`scan_drawdown_quality.py` 會自動抓取台股上市櫃股票清單，再依人工主流產業清單篩選候選股，不需要使用者手動輸入股票代號。
 
 ### 功能流程
 
 1. 自動從 TWSE / TPEx 官方 OpenAPI 抓取台股股票清單
-2. 自動用 yfinance 下載每檔股票最近至少 90 個交易日的真實股價資料
-3. 找出「距離 60 日高點回落 >= 20%」的股票
-4. 對符合回落條件的股票做品質檢查
-5. 輸出 `drawdown_quality_report.csv`，並在終端機顯示前 10 筆表格
+2. 只保留人工主流產業清單中的股票，不輸出傳統產業或非清單股票
+3. 自動用 yfinance 下載每檔候選股票最近至少 90 個交易日的真實股價資料
+4. 找出「距離 60 日高點回落 >= 20%」的股票
+5. 對符合回落條件的股票做品質檢查
+6. 輸出 `drawdown_quality_report.csv`，並在終端機顯示前 10 筆表格
 
 ### 執行方式
 
@@ -54,6 +55,7 @@ python scan_drawdown_quality.py --include-insufficient
   - 超過 200%：危險
 - `是否出現垂直拉升`
 - `是否屬於主流產業`
+- `主流產業類別`
 - `最終評級`
   - A級：品質較好，可買
   - B級：只觀察
@@ -62,7 +64,7 @@ python scan_drawdown_quality.py --include-insufficient
 
 ### 主流產業人工清單
 
-目前主流產業使用 `scan_drawdown_quality.py` 內的人工股票代號清單判斷，包含：
+目前主流產業只使用 `scan_drawdown_quality.py` 內的人工股票代號清單判斷，包含：
 
 - AI Server
 - PCB

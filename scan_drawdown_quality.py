@@ -289,15 +289,15 @@ def get_mainstream_theme(stock: StockInfo) -> str:
     themes = MAINSTREAM_CODES.get(stock.code, [])
     if themes:
         return "、".join(themes)
+    return "非主流產業"
 
-    # 粗略補強：官方產業別若屬於半導體，直接視為主流。
-    if "半導體" in stock.industry:
-        return "半導體"
-    return "否"
+
+def is_mainstream_stock(stock: StockInfo) -> bool:
+    return stock.code in MAINSTREAM_CODES
 
 
 def final_rating(risk: str, vertical_rise: str, mainstream_theme: str) -> str:
-    is_mainstream = mainstream_theme != "否"
+    is_mainstream = mainstream_theme != "非主流產業"
     if risk == "危險" or vertical_rise == "是":
         return "C級：不買"
     if risk == "正常" and vertical_rise == "否" and is_mainstream:
@@ -318,7 +318,8 @@ def insufficient_row(stock: StockInfo, reason: str) -> dict:
         "最近3個月從低點到高點上漲百分比": "資料不足",
         "上漲風險判斷": "資料不足",
         "是否出現垂直拉升": "資料不足",
-        "是否屬於主流產業": mainstream_theme,
+        "是否屬於主流產業": "是" if mainstream_theme != "非主流產業" else "否",
+        "主流產業類別": mainstream_theme,
         "最終評級": "資料不足",
         "資料狀態": f"資料不足: {reason}",
     }
@@ -366,7 +367,8 @@ def analyze_stock(stock: StockInfo, fetcher: DataFetcher, sleep_seconds: float =
         "最近3個月從低點到高點上漲百分比": format_percent(rise_pct),
         "上漲風險判斷": risk,
         "是否出現垂直拉升": vertical_rise,
-        "是否屬於主流產業": mainstream_theme,
+        "是否屬於主流產業": "是" if mainstream_theme != "非主流產業" else "否",
+        "主流產業類別": mainstream_theme,
         "最終評級": final_rating(risk, vertical_rise, mainstream_theme),
         "資料狀態": "OK",
     }
@@ -379,10 +381,12 @@ def scan_drawdown_quality(
     sleep_seconds: float = 0.0,
 ) -> pd.DataFrame:
     print("【步驟1】自動抓取台股上市櫃股票清單...")
-    stocks = fetch_taiwan_stock_list()
+    all_stocks = fetch_taiwan_stock_list()
+    stocks = [stock for stock in all_stocks if is_mainstream_stock(stock)]
     if limit:
         stocks = stocks[:limit]
-    print(f"共取得 {len(stocks)} 檔股票")
+    print(f"共取得 {len(all_stocks)} 檔股票")
+    print(f"依人工主流產業清單篩選後，準備掃描 {len(stocks)} 檔股票")
 
     fetcher = DataFetcher()
     rows: List[dict] = []
@@ -409,6 +413,7 @@ def scan_drawdown_quality(
         "上漲風險判斷",
         "是否出現垂直拉升",
         "是否屬於主流產業",
+        "主流產業類別",
         "最終評級",
         "資料狀態",
     ]
