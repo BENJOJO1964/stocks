@@ -11,14 +11,10 @@
 from __future__ import annotations
 
 import argparse
-import json
-import ssl
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
-from urllib.request import Request, urlopen
-
 import pandas as pd
 import requests
 
@@ -151,20 +147,35 @@ class StockInfo:
 
 def fetch_json(url: str, timeout: int = 20) -> List[dict]:
     headers = {"User-Agent": "stocks-drawdown-quality-scanner/1.0"}
+    candidate_urls = [url]
+
+    # TPEx 官方 OpenAPI 的 HTTPS 憑證在部分 macOS/Python 組合會驗證失敗，
+    # 官方 HTTP 端點可正常回傳同一份公開資料，因此作為備援。
+    if url.startswith("https://www.tpex.org.tw/"):
+        candidate_urls.append(url.replace("https://", "http://", 1))
+
+    last_error: Optional[Exception] = None
+    for candidate_url in candidate_urls:
+        try:
+            response = requests.get(candidate_url, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, list):
+                raise ValueError(f"API 回傳格式不是清單: {candidate_url}")
+            return data
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+
     try:
-        response = requests.get(url, headers=headers, timeout=timeout)
+        print(f"警告：{url} 憑證驗證失敗，改用官方 OpenAPI 不驗證憑證備援。")
+        response = requests.get(url, headers=headers, timeout=timeout, verify=False)
         response.raise_for_status()
         data = response.json()
-    except requests.RequestException:
-        request = Request(url, headers=headers)
-        context = ssl.create_default_context()
-        with urlopen(request, timeout=timeout, context=context) as response:
-            raw = response.read().decode("utf-8-sig")
-        data = json.loads(raw)
-
-    if not isinstance(data, list):
-        raise ValueError(f"API 回傳格式不是清單: {url}")
-    return data
+        if not isinstance(data, list):
+            raise ValueError(f"API 回傳格式不是清單: {url}")
+        return data
+    except (requests.RequestException, ValueError) as exc:
+        raise RuntimeError(f"無法抓取官方股票清單: {url}; 最後錯誤: {exc}") from last_error
 
 
 def pick_value(row: dict, candidates: Iterable[str]) -> str:
